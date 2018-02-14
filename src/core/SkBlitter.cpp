@@ -13,7 +13,7 @@
 #include "SkReadBuffer.h"
 #include "SkWriteBuffer.h"
 #include "SkMask.h"
-#include "SkMaskFilter.h"
+#include "SkMaskFilterBase.h"
 #include "SkPaintPriv.h"
 #include "SkShaderBase.h"
 #include "SkString.h"
@@ -42,7 +42,8 @@ void SkBlitter::blitAntiH(int x, int y, const SkAlpha antialias[],
  */
 
 inline static SkAlpha ScalarToAlpha(SkScalar a) {
-    return (SkAlpha)(a * 255);
+    SkAlpha alpha = (SkAlpha)(a * 255);
+    return alpha > 247 ? 0xFF : alpha < 8 ? 0 : alpha;
 }
 
 void SkBlitter::blitFatAntiRect(const SkRect& rect) {
@@ -79,11 +80,13 @@ void SkBlitter::blitFatAntiRect(const SkRect& rect) {
 }
 
 void SkBlitter::blitCoverageDeltas(SkCoverageDeltaList* deltas, const SkIRect& clip,
-                                   bool isEvenOdd, bool isInverse, bool isConvex) {
-    int         runSize = clip.width() + 1; // +1 so we can set runs[clip.width()] = 0
-    void*       storage = this->allocBlitMemory(runSize * (sizeof(int16_t) + sizeof(SkAlpha)));
-    int16_t*    runs    = reinterpret_cast<int16_t*>(storage);
-    SkAlpha*    alphas  = reinterpret_cast<SkAlpha*>(runs + runSize);
+                                   bool isEvenOdd, bool isInverse, bool isConvex,
+                                   SkArenaAlloc* alloc) {
+    // We cannot use blitter to allocate the storage because the same blitter might be used across
+    // many threads.
+    int      runSize    = clip.width() + 1; // +1 so we can set runs[clip.width()] = 0
+    int16_t* runs       = alloc->makeArrayDefault<int16_t>(runSize);
+    SkAlpha* alphas     = alloc->makeArrayDefault<SkAlpha>(runSize);
     runs[clip.width()]  = 0; // we must set the last run to 0 so blitAntiH can stop there
 
     bool canUseMask = !deltas->forceRLE() &&
@@ -715,11 +718,7 @@ public:
             }
         }
 
-        ~Sk3DShaderContext() override {
-            if (fProxyContext) {
-                fProxyContext->~Context();
-            }
-        }
+        ~Sk3DShaderContext() override = default;
 
         void set3DMask(const SkMask* mask) override { fMask = mask; }
 
@@ -790,7 +789,7 @@ public:
     private:
         // Unowned.
         const SkMask* fMask;
-        // Memory is unowned, but we need to call the destructor.
+        // Memory is unowned.
         Context*      fProxyContext;
         SkPMColor     fPMColor;
 
@@ -918,6 +917,11 @@ bool SkBlitter::UseRasterPipelineBlitter(const SkPixmap& device, const SkPaint& 
         return true;
     }
 
+    // Added support only for shaders (and other constraints) for android
+    if (device.colorType() == kRGB_565_SkColorType) {
+        return false;
+    }
+
     return device.colorType() != kN32_SkColorType;
 #endif
 }
@@ -944,7 +948,7 @@ SkBlitter* SkBlitter::Choose(const SkPixmap& device,
     SkTCopyOnFirstWrite<SkPaint> paint(origPaint);
 
     if (origPaint.getMaskFilter() != nullptr &&
-            origPaint.getMaskFilter()->getFormat() == SkMask::k3D_Format) {
+            as_MFB(origPaint.getMaskFilter())->getFormat() == SkMask::k3D_Format) {
         shader3D = sk_make_sp<Sk3DShader>(sk_ref_sp(shader));
         // we know we haven't initialized lazyPaint yet, so just do it
         paint.writable()->setShader(shader3D);
@@ -1052,6 +1056,13 @@ SkBlitter* SkBlitter::Choose(const SkPixmap& device,
                 blitter = alloc->make<SkARGB32_Opaque_Blitter>(device, *paint);
             } else {
                 blitter = alloc->make<SkARGB32_Blitter>(device, *paint);
+            }
+            break;
+        case kRGB_565_SkColorType:
+            if (shader && SkRGB565_Shader_Blitter::Supports(device, *paint)) {
+                blitter = alloc->make<SkRGB565_Shader_Blitter>(device, *paint, shaderContext);
+            } else {
+                blitter = SkCreateRasterPipelineBlitter(device, *paint, matrix, alloc);
             }
             break;
 

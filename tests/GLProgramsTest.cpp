@@ -78,7 +78,7 @@ public:
     std::unique_ptr<GrFragmentProcessor> clone() const override { return Make(); }
 
 private:
-    BigKeyProcessor() : INHERITED(kNone_OptimizationFlags) { this->initClassID<BigKeyProcessor>(); }
+    BigKeyProcessor() : INHERITED(kBigKeyProcessor_ClassID, kNone_OptimizationFlags) { }
     virtual void onGetGLSLProcessorKey(const GrShaderCaps& caps,
                                        GrProcessorKeyBuilder* b) const override {
         GLBigKeyProcessor::GenKey(*this, caps, b);
@@ -126,8 +126,7 @@ private:
     };
 
     BlockInputFragmentProcessor(std::unique_ptr<GrFragmentProcessor> child)
-            : INHERITED(kNone_OptimizationFlags) {
-        this->initClassID<BlockInputFragmentProcessor>();
+            : INHERITED(kBlockInputFragmentProcessor_ClassID, kNone_OptimizationFlags) {
         this->registerChildProcessor(std::move(child));
     }
 
@@ -151,7 +150,10 @@ static sk_sp<GrRenderTargetContext> random_render_target_context(GrContext* cont
                                                                  const GrCaps* caps) {
     GrSurfaceOrigin origin = random->nextBool() ? kTopLeft_GrSurfaceOrigin
                                                 : kBottomLeft_GrSurfaceOrigin;
-    int sampleCnt = random->nextBool() ? caps->getSampleCount(4, kRGBA_8888_GrPixelConfig) : 0;
+    int sampleCnt =
+            random->nextBool() ? caps->getRenderTargetSampleCount(2, kRGBA_8888_GrPixelConfig) : 1;
+    // Above could be 0 if msaa isn't supported.
+    sampleCnt = SkTMax(1, sampleCnt);
 
     sk_sp<GrRenderTargetContext> renderTargetContext(context->makeDeferredRenderTargetContext(
                                                                            SkBackingFit::kExact,
@@ -160,6 +162,7 @@ static sk_sp<GrRenderTargetContext> random_render_target_context(GrContext* cont
                                                                            kRGBA_8888_GrPixelConfig,
                                                                            nullptr,
                                                                            sampleCnt,
+                                                                           GrMipMapped::kNo,
                                                                            origin));
     return renderTargetContext;
 }
@@ -261,25 +264,29 @@ bool GrDrawingManager::ProgramUnitTest(GrContext*, int) { return true; }
 #else
 bool GrDrawingManager::ProgramUnitTest(GrContext* context, int maxStages, int maxLevels) {
     GrDrawingManager* drawingManager = context->contextPriv().drawingManager();
+    GrProxyProvider* proxyProvider = context->contextPriv().proxyProvider();
 
     sk_sp<GrTextureProxy> proxies[2];
 
     // setup dummy textures
-    GrSurfaceDesc dummyDesc;
-    dummyDesc.fFlags = kRenderTarget_GrSurfaceFlag;
-    dummyDesc.fOrigin = kBottomLeft_GrSurfaceOrigin;
-    dummyDesc.fWidth = 34;
-    dummyDesc.fHeight = 18;
-    dummyDesc.fConfig = kRGBA_8888_GrPixelConfig;
-    proxies[0] = GrSurfaceProxy::MakeDeferred(context->resourceProvider(),
-                                              dummyDesc, SkBudgeted::kNo, nullptr, 0);
-    dummyDesc.fFlags = kNone_GrSurfaceFlags;
-    dummyDesc.fOrigin = kTopLeft_GrSurfaceOrigin;
-    dummyDesc.fWidth = 16;
-    dummyDesc.fHeight = 22;
-    dummyDesc.fConfig = kAlpha_8_GrPixelConfig;
-    proxies[1] = GrSurfaceProxy::MakeDeferred(context->resourceProvider(),
-                                              dummyDesc, SkBudgeted::kNo, nullptr, 0);
+    {
+        GrSurfaceDesc dummyDesc;
+        dummyDesc.fFlags = kRenderTarget_GrSurfaceFlag;
+        dummyDesc.fOrigin = kBottomLeft_GrSurfaceOrigin;
+        dummyDesc.fWidth = 34;
+        dummyDesc.fHeight = 18;
+        dummyDesc.fConfig = kRGBA_8888_GrPixelConfig;
+        proxies[0] = proxyProvider->createProxy(dummyDesc, SkBackingFit::kExact, SkBudgeted::kNo);
+    }
+    {
+        GrSurfaceDesc dummyDesc;
+        dummyDesc.fFlags = kNone_GrSurfaceFlags;
+        dummyDesc.fOrigin = kTopLeft_GrSurfaceOrigin;
+        dummyDesc.fWidth = 16;
+        dummyDesc.fHeight = 22;
+        dummyDesc.fConfig = kAlpha_8_GrPixelConfig;
+        proxies[1] = proxyProvider->createProxy(dummyDesc, SkBackingFit::kExact, SkBudgeted::kNo);
+    }
 
     if (!proxies[0] || !proxies[1]) {
         SkDebugf("Could not allocate dummy textures");
@@ -344,7 +351,7 @@ bool GrDrawingManager::ProgramUnitTest(GrContext* context, int maxStages, int ma
 
 static int get_glprograms_max_stages(const sk_gpu_test::ContextInfo& ctxInfo) {
     GrContext* context = ctxInfo.grContext();
-    GrGLGpu* gpu = static_cast<GrGLGpu*>(context->getGpu());
+    GrGLGpu* gpu = static_cast<GrGLGpu*>(context->contextPriv().getGpu());
     int maxStages = 6;
     if (kGLES_GrGLStandard == gpu->glStandard()) {
     // We've had issues with driver crashes and HW limits being exceeded with many effects on
@@ -398,7 +405,7 @@ static void test_glprograms(skiatest::Reporter* reporter, const sk_gpu_test::Con
                                                                 maxLevels));
 }
 
-DEF_GPUTEST(GLPrograms, reporter, /*factory*/) {
+DEF_GPUTEST(GLPrograms, reporter, options) {
     // Set a locale that would cause shader compilation to fail because of , as decimal separator.
     // skbug 3330
 #ifdef SK_BUILD_FOR_WIN
@@ -408,11 +415,11 @@ DEF_GPUTEST(GLPrograms, reporter, /*factory*/) {
 #endif
 
     // We suppress prints to avoid spew
-    GrContextOptions opts;
+    GrContextOptions opts = options;
     opts.fSuppressPrints = true;
     sk_gpu_test::GrContextFactory debugFactory(opts);
     skiatest::RunWithGPUTestContexts(test_glprograms, &skiatest::IsRenderingGLContextType, reporter,
-                                     &debugFactory);
+                                     opts);
 }
 
 #endif

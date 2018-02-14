@@ -23,7 +23,7 @@
 #include "glsl/GrGLSLGeometryProcessor.h"
 #include "glsl/GrGLSLProgramDataManager.h"
 #include "glsl/GrGLSLUtil.h"
-#include "glsl/GrGLSLVertexShaderBuilder.h"
+#include "glsl/GrGLSLVertexGeoBuilder.h"
 #include "ops/GrMeshDrawOp.h"
 #include "ops/GrRectOpFactory.h"
 
@@ -140,8 +140,8 @@ public:
             varyingHandler->emitAttributes(qp);
             varyingHandler->addPassThroughAttribute(qp.inColor(), args.fOutputColor);
 
-            GrGLSLVertToFrag uv(kFloat2_GrSLType);
-            varyingHandler->addVarying("uv", &uv, kHigh_GrSLPrecision);
+            GrGLSLVarying uv(kFloat2_GrSLType);
+            varyingHandler->addVarying("uv", &uv);
             vsBuilder->codeAppendf("%s = %s;", uv.vsOut(), qp.inUV()->fName);
 
             // Setup position
@@ -149,8 +149,8 @@ public:
                                       qp.viewMatrix(), &fViewMatrixUniform);
 
             // emit transforms
-            this->emitTransforms(vsBuilder, varyingHandler, uniformHandler, gpArgs->fPositionVar,
-                                 qp.inPosition()->fName, SkMatrix::I(),
+            this->emitTransforms(vsBuilder, varyingHandler, uniformHandler,
+                                 qp.inPosition()->asShaderVar(), SkMatrix::I(),
                                  args.fFPCoordTransformHandler);
 
             GrGLSLPPFragmentBuilder* fsBuilder = args.fFragBuilder;
@@ -197,8 +197,8 @@ public:
 
 private:
     MSAAQuadProcessor(const SkMatrix& viewMatrix)
-        : fViewMatrix(viewMatrix) {
-        this->initClassID<MSAAQuadProcessor>();
+        : INHERITED(kMSAAQuadProcessor_ClassID)
+        , fViewMatrix(viewMatrix) {
         fInPosition = &this->addVertexAttrib("inPosition", kFloat2_GrVertexAttribType);
         fInUV = &this->addVertexAttrib("inUV", kFloat2_GrVertexAttribType);
         fInColor = &this->addVertexAttrib("inColor", kUByte4_norm_GrVertexAttribType);
@@ -368,7 +368,7 @@ private:
         SkDEBUGCODE(quads.verticesEnd = quads.vertices + fMaxQuadVertices;)
 
         const GrBuffer* lineIndexBuffer = nullptr;
-        int firstLineIndex;
+        int firstLineIndex = 0;
         if (fIsIndexed) {
             lines.indices =
                     target->makeIndexSpace(3 * fMaxLineVertices, &lineIndexBuffer, &firstLineIndex);
@@ -637,8 +637,10 @@ bool GrMSAAPathRenderer::internalDrawPath(GrRenderTargetContext* renderTargetCon
     }
 
     SkRect devBounds;
-    GetPathDevBounds(path, renderTargetContext->width(), renderTargetContext->height(), viewMatrix,
-                     &devBounds);
+    GetPathDevBounds(path,
+                     renderTargetContext->asRenderTargetProxy()->worstCaseWidth(),
+                     renderTargetContext->asRenderTargetProxy()->worstCaseHeight(),
+                     viewMatrix, &devBounds);
 
     SkASSERT(passes[0]);
     {  // First pass

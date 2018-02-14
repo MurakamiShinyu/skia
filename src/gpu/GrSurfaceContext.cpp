@@ -10,7 +10,6 @@
 #include "GrContextPriv.h"
 #include "GrDrawingManager.h"
 #include "GrOpList.h"
-#include "SkColorSpace_Base.h"
 #include "SkGr.h"
 
 #include "../private/GrAuditTrail.h"
@@ -25,17 +24,21 @@
 // when the renderTargetContext attempts to use it (via getOpList).
 GrSurfaceContext::GrSurfaceContext(GrContext* context,
                                    GrDrawingManager* drawingMgr,
+                                   GrPixelConfig config,
                                    sk_sp<SkColorSpace> colorSpace,
                                    GrAuditTrail* auditTrail,
                                    GrSingleOwner* singleOwner)
-    : fContext(context)
-    , fColorSpace(std::move(colorSpace))
-    , fAuditTrail(auditTrail)
-    , fDrawingManager(drawingMgr)
+        : fContext(context)
+        , fAuditTrail(auditTrail)
+        , fColorSpaceInfo(std::move(colorSpace), config)
+        , fDrawingManager(drawingMgr)
 #ifdef SK_DEBUG
-    , fSingleOwner(singleOwner)
+        , fSingleOwner(singleOwner)
 #endif
 {
+    // We never should have a sRGB pixel config with a non-SRGB gamma color space.
+    SkASSERT(!GrPixelConfigIsSRGB(config) ||
+             (fColorSpaceInfo.colorSpace() && fColorSpaceInfo.colorSpace()->gammaCloseToSRGB()));
 }
 
 bool GrSurfaceContext::readPixels(const SkImageInfo& dstInfo, void* dstBuffer,

@@ -29,21 +29,16 @@ public:
     GrVkCaps(const GrContextOptions& contextOptions, const GrVkInterface* vkInterface,
              VkPhysicalDevice device, uint32_t featureFlags, uint32_t extensionFlags);
 
-    int getSampleCount(int requestedCount, GrPixelConfig config) const override;
-
     bool isConfigTexturable(GrPixelConfig config) const override {
         return SkToBool(ConfigInfo::kTextureable_Flag & fConfigTable[config].fOptimalFlags);
-    }
-
-    bool isConfigRenderable(GrPixelConfig config, bool withMSAA) const override {
-        return SkToBool(ConfigInfo::kRenderable_Flag & fConfigTable[config].fOptimalFlags);
     }
 
     bool isConfigCopyable(GrPixelConfig config) const override {
         return true;
     }
 
-    bool canConfigBeImageStorage(GrPixelConfig) const override { return false; }
+    int getRenderTargetSampleCount(int requestedCount, GrPixelConfig config) const override;
+    int maxRenderTargetSampleCount(GrPixelConfig config) const override;
 
     bool isConfigTexturableLinearly(GrPixelConfig config) const {
         return SkToBool(ConfigInfo::kTextureable_Flag & fConfigTable[config].fLinearFlags);
@@ -113,6 +108,11 @@ public:
     bool initDescForDstCopy(const GrRenderTargetProxy* src, GrSurfaceDesc* desc,
                             bool* rectsMustMatch, bool* disallowSubrect) const override;
 
+    bool validateBackendTexture(const GrBackendTexture&, SkColorType,
+                                GrPixelConfig*) const override;
+    bool validateBackendRenderTarget(const GrBackendRenderTarget&, SkColorType,
+                                     GrPixelConfig*) const override;
+
 private:
     enum VkVendor {
         kAMD_VkVendor = 4098,
@@ -127,8 +127,6 @@ private:
                     const VkPhysicalDeviceMemoryProperties&,
                     uint32_t featureFlags);
     void initShaderCaps(const VkPhysicalDeviceProperties&, uint32_t featureFlags);
-    void initSampleCount(const VkPhysicalDeviceProperties& properties);
-
 
     void initConfigTable(const GrVkInterface*, VkPhysicalDevice, const VkPhysicalDeviceProperties&);
     void initStencilFormat(const GrVkInterface* iface, VkPhysicalDevice physDev);

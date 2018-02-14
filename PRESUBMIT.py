@@ -35,6 +35,11 @@ PUBLIC_API_OWNERS = (
     'hcm@google.com',
 )
 
+AUTO_COMMIT_BOTS = (
+    'update-docs@skia.org',
+    'update-skps@skia.org'
+)
+
 AUTHORS_FILE_NAME = 'AUTHORS'
 
 DOCS_PREVIEW_URL = 'https://skia.org/?cl='
@@ -43,10 +48,10 @@ GOLD_TRYBOT_URL = 'https://gold.skia.org/search?issue='
 # Path to CQ bots feature is described in https://bug.skia.org/4364
 PATH_PREFIX_TO_EXTRA_TRYBOTS = {
     'src/opts/': ('skia.primary:'
-      'Test-Debian9-Clang-GCE-CPU-AVX2-x86_64-Release-SKNX_NO_SIMD'),
+      'Test-Debian9-Clang-GCE-CPU-AVX2-x86_64-Release-All-SKNX_NO_SIMD'),
     'include/private/SkAtomics.h': ('skia.primary:'
-      'Test-Debian9-Clang-GCE-CPU-AVX2-x86_64-Release-TSAN,'
-      'Test-Ubuntu17-Clang-Golo-GPU-QuadroP400-x86_64-Release-TSAN'
+      'Test-Debian9-Clang-GCE-CPU-AVX2-x86_64-Release-All-TSAN,'
+      'Test-Ubuntu17-Clang-Golo-GPU-QuadroP400-x86_64-Release-All-TSAN'
     ),
 
     # Below are examples to show what is possible with this feature.
@@ -54,6 +59,8 @@ PATH_PREFIX_TO_EXTRA_TRYBOTS = {
     # 'src/svg/parser/': 'master3:ghi,jkl;master4:mno',
     # 'src/image/SkImage_Base.h': 'master5:pqr,stu;master1:abc1;master2:def',
 }
+
+SERVICE_ACCOUNT_SUFFIX = '@skia-buildbots.google.com.iam.gserviceaccount.com'
 
 
 def _CheckChangeHasEol(input_api, output_api, source_file_filter=None):
@@ -100,6 +107,29 @@ def _PythonChecks(input_api, output_api):
       input_api, output_api,
       disabled_warnings=pylint_disabled_warnings,
       white_list=affected_python_files)
+
+
+def _JsonChecks(input_api, output_api):
+  """Run checks on any modified json files."""
+  failing_files = []
+  for affected_file in input_api.AffectedFiles(None):
+    affected_file_path = affected_file.LocalPath()
+    is_json = affected_file_path.endswith('.json')
+    is_metadata = (affected_file_path.startswith('site/') and
+                   affected_file_path.endswith('/METADATA'))
+    if is_json or is_metadata:
+      try:
+        input_api.json.load(open(affected_file_path, 'r'))
+      except ValueError:
+        failing_files.append(affected_file_path)
+
+  results = []
+  if failing_files:
+    results.append(
+        output_api.PresubmitError(
+            'The following files contain invalid json:\n%s\n\n' %
+                '\n'.join(failing_files)))
+  return results
 
 
 def _IfDefChecks(input_api, output_api):
@@ -222,7 +252,14 @@ def _CommonChecks(input_api, output_api):
   results.extend(
       _CheckChangeHasEol(
           input_api, output_api, source_file_filter=sources))
+  results.extend(
+      input_api.canned_checks.CheckChangeHasNoCR(
+          input_api, output_api, source_file_filter=sources))
+  results.extend(
+      input_api.canned_checks.CheckChangeHasNoStrayWhitespace(
+          input_api, output_api, source_file_filter=sources))
   results.extend(_PythonChecks(input_api, output_api))
+  results.extend(_JsonChecks(input_api, output_api))
   results.extend(_IfDefChecks(input_api, output_api))
   results.extend(_CopyrightChecks(input_api, output_api,
                                   source_file_filter=sources))
@@ -290,56 +327,32 @@ class CodeReview(object):
   def __init__(self, input_api):
     self._issue = input_api.change.issue
     self._gerrit = input_api.gerrit
-    self._rietveld_properties = None
-    if not self._gerrit:
-      self._rietveld_properties = input_api.rietveld.get_issue_properties(
-          issue=int(self._issue), messages=True)
 
   def GetOwnerEmail(self):
-    if self._gerrit:
-      return self._gerrit.GetChangeOwner(self._issue)
-    else:
-      return self._rietveld_properties['owner_email']
+    return self._gerrit.GetChangeOwner(self._issue)
 
   def GetSubject(self):
-    if self._gerrit:
-      return self._gerrit.GetChangeInfo(self._issue)['subject']
-    else:
-      return self._rietveld_properties['subject']
+    return self._gerrit.GetChangeInfo(self._issue)['subject']
 
   def GetDescription(self):
-    if self._gerrit:
-      return self._gerrit.GetChangeDescription(self._issue)
-    else:
-      return self._rietveld_properties['description']
+    return self._gerrit.GetChangeDescription(self._issue)
 
   def IsDryRun(self):
-    if self._gerrit:
-      return self._gerrit.GetChangeInfo(
-          self._issue)['labels']['Commit-Queue'].get('value', 0) == 1
-    else:
-      return self._rietveld_properties['cq_dry_run']
+    return self._gerrit.GetChangeInfo(
+        self._issue)['labels']['Commit-Queue'].get('value', 0) == 1
 
   def GetReviewers(self):
-    if self._gerrit:
-      code_review_label = (
-          self._gerrit.GetChangeInfo(self._issue)['labels']['Code-Review'])
-      return [r['email'] for r in code_review_label.get('all', [])]
-    else:
-      return self._rietveld_properties['reviewers']
+    code_review_label = (
+        self._gerrit.GetChangeInfo(self._issue)['labels']['Code-Review'])
+    return [r['email'] for r in code_review_label.get('all', [])]
 
   def GetApprovers(self):
     approvers = []
-    if self._gerrit:
-      code_review_label = (
-          self._gerrit.GetChangeInfo(self._issue)['labels']['Code-Review'])
-      for m in code_review_label.get('all', []):
-        if m.get("value") == 1:
-          approvers.append(m["email"])
-    else:
-      for m in self._rietveld_properties.get('messages', []):
-        if 'lgtm' in m['text'].lower():
-          approvers.append(m['sender'])
+    code_review_label = (
+        self._gerrit.GetChangeInfo(self._issue)['labels']['Code-Review'])
+    for m in code_review_label.get('all', []):
+      if m.get("value") == 1:
+        approvers.append(m["email"])
     return approvers
 
 
@@ -349,6 +362,11 @@ def _CheckOwnerIsInAuthorsFile(input_api, output_api):
     cr = CodeReview(input_api)
 
     owner_email = cr.GetOwnerEmail()
+
+    # Service accounts don't need to be in AUTHORS.
+    if owner_email.endswith(SERVICE_ACCOUNT_SUFFIX):
+      return results
+
     try:
       authors_content = ''
       for line in open(AUTHORS_FILE_NAME):
@@ -441,10 +459,9 @@ def _CheckLGTMsForPublicAPI(input_api, output_api):
             "If this CL adds to or changes Skia's public API, you need an LGTM "
             "from any of %s.  If this CL only removes from or doesn't change "
             "Skia's public API, please add a short note to the CL saying so. "
-            "Add one of the owners as a reviewer to your CL. For Rietveld CLs "
-            "you also need to add one of those owners on a TBR= line.  If you "
-            "don't know if this CL affects Skia's public API, treat it like it "
-            "does." % str(PUBLIC_API_OWNERS)))
+            "Add one of the owners as a reviewer to your CL as well as to the "
+            "TBR= line.  If you don't know if this CL affects Skia's public "
+            "API, treat it like it does." % str(PUBLIC_API_OWNERS)))
   return results
 
 
@@ -485,6 +502,12 @@ def PostUploadHook(cl, change, output_api):
 
   issue = cl.issue
   if issue:
+    # Skip PostUploadHooks for all auto-commit bots. New patchsets (caused
+    # due to PostUploadHooks) invalidates the CQ+2 vote from the
+    # "--use-commit-queue" flag to "git cl upload".
+    if cl.GetIssueOwner() in AUTO_COMMIT_BOTS:
+      return results
+
     original_description_lines, footers = cl.GetDescriptionFooters()
     new_description_lines = list(original_description_lines)
 

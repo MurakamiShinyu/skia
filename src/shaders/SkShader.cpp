@@ -163,7 +163,7 @@ SkShader::GradientType SkShader::asAGradient(GradientInfo* info) const {
 }
 
 #if SK_SUPPORT_GPU
-std::unique_ptr<GrFragmentProcessor> SkShaderBase::asFragmentProcessor(const AsFPArgs&) const {
+std::unique_ptr<GrFragmentProcessor> SkShaderBase::asFragmentProcessor(const GrFPArgs&) const {
     return nullptr;
 }
 #endif
@@ -232,7 +232,7 @@ bool SkShaderBase::onAppendStages(const StageRec& rec) const {
     };
 
     if (cb->ctx) {
-        rec.fPipeline->append(SkRasterPipeline::seed_shader);
+        rec.fPipeline->append_seed_shader();
         rec.fPipeline->append(SkRasterPipeline::callback, cb);
         return true;
     }

@@ -8,7 +8,6 @@
 #include "Sk1DPathEffect.h"
 #include "Sk2DPathEffect.h"
 #include "SkAlphaThresholdFilter.h"
-#include "SkBitmapSourceDeserializer.h"
 #include "SkBlurImageFilter.h"
 #include "SkBlurMaskFilter.h"
 #include "SkColorFilterImageFilter.h"
@@ -24,7 +23,6 @@
 #include "SkHighContrastFilter.h"
 #include "SkImageSource.h"
 #include "SkLayerDrawLooper.h"
-#include "SkLayerRasterizer.h"
 #include "SkLightingImageFilter.h"
 #include "SkLocalMatrixImageFilter.h"
 #include "SkLumaColorFilter.h"
@@ -38,6 +36,7 @@
 #include "SkPerlinNoiseShader.h"
 #include "SkPictureImageFilter.h"
 #include "SkRRectsGaussianEdgeMaskFilter.h"
+#include "SkShaderMaskFilter.h"
 #include "SkTableColorFilter.h"
 #include "SkTileImageFilter.h"
 #include "SkToSRGBColorFilter.h"
@@ -61,18 +60,15 @@
  *  will automatically be called before any of skia's effects are asked to be deserialized.
  */
 void SkFlattenable::PrivateInitializer::InitEffects() {
-    SK_DEFINE_FLATTENABLE_REGISTRAR_ENTRY(SkBitmapSourceDeserializer)
-
     // MaskFilter
+    SkMaskFilter::InitializeFlattenables();
     SK_DEFINE_FLATTENABLE_REGISTRAR_ENTRY(SkEmbossMaskFilter)
     SkBlurMaskFilter::InitializeFlattenables();
     SkRRectsGaussianEdgeMaskFilter::InitializeFlattenables();
+    SkShaderMaskFilter::InitializeFlattenables();
 
     // DrawLooper
     SK_DEFINE_FLATTENABLE_REGISTRAR_ENTRY(SkLayerDrawLooper)
-
-    // Rasterizer
-    SK_DEFINE_FLATTENABLE_REGISTRAR_ENTRY(SkLayerRasterizer)
 
     // ColorFilter
     SK_DEFINE_FLATTENABLE_REGISTRAR_ENTRY(SkColorMatrixFilterRowMajor255)

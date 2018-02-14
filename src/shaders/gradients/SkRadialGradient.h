@@ -16,7 +16,7 @@ public:
 
     GradientType asAGradient(GradientInfo* info) const override;
 #if SK_SUPPORT_GPU
-    std::unique_ptr<GrFragmentProcessor> asFragmentProcessor(const AsFPArgs&) const override;
+    std::unique_ptr<GrFragmentProcessor> asFragmentProcessor(const GrFPArgs&) const override;
 #endif
 
     SK_TO_STRING_OVERRIDE()
@@ -26,7 +26,7 @@ protected:
     SkRadialGradient(SkReadBuffer& buffer);
     void flatten(SkWriteBuffer& buffer) const override;
     sk_sp<SkShader> onMakeColorSpace(SkColorSpaceXformer* xformer) const override;
-    
+
     void appendGradientStages(SkArenaAlloc* alloc, SkRasterPipeline* tPipeline,
                               SkRasterPipeline* postPipeline) const override;
 

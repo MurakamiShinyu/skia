@@ -165,6 +165,20 @@ DEF_TEST(SkNi_saturatedAdd, r) {
     }
 }
 
+DEF_TEST(SkNi_mulHi, r) {
+    // First 8 primes.
+    Sk4u a{ 0x00020000, 0x00030000, 0x00050000, 0x00070000 };
+    Sk4u b{ 0x000b0000, 0x000d0000, 0x00110000, 0x00130000 };
+
+    Sk4u q{22, 39, 85, 133};
+
+    Sk4u c = a.mulHi(b);
+    REPORTER_ASSERT(r, c[0] == q[0]);
+    REPORTER_ASSERT(r, c[1] == q[1]);
+    REPORTER_ASSERT(r, c[2] == q[2]);
+    REPORTER_ASSERT(r, c[3] == q[3]);
+}
+
 DEF_TEST(Sk4px_muldiv255round, r) {
     for (int a = 0; a < (1<<8); a++) {
     for (int b = 0; b < (1<<8); b++) {
@@ -391,4 +405,52 @@ DEF_TEST(SkNx_thenElse, r) {
     REPORTER_ASSERT(r, fshi[1] == 1);
     REPORTER_ASSERT(r, fslo[0] == 1);
     REPORTER_ASSERT(r, fslo[1] == -1);
+}
+
+DEF_TEST(Sk4f_Load2, r) {
+    float xy[8] = { 0,1,2,3,4,5,6,7 };
+
+    Sk4f x,y;
+    Sk4f::Load2(xy, &x,&y);
+
+    REPORTER_ASSERT(r, x[0] == 0);
+    REPORTER_ASSERT(r, x[1] == 2);
+    REPORTER_ASSERT(r, x[2] == 4);
+    REPORTER_ASSERT(r, x[3] == 6);
+
+    REPORTER_ASSERT(r, y[0] == 1);
+    REPORTER_ASSERT(r, y[1] == 3);
+    REPORTER_ASSERT(r, y[2] == 5);
+    REPORTER_ASSERT(r, y[3] == 7);
+}
+
+DEF_TEST(Sk2f_Store3, r) {
+    Sk2f p0{0, 3};
+    Sk2f p1{1, 4};
+    Sk2f p2{2, 5};
+    float dst[6];
+    Sk2f::Store3(dst, p0, p1, p2);
+    REPORTER_ASSERT(r, dst[0] == 0);
+    REPORTER_ASSERT(r, dst[1] == 1);
+    REPORTER_ASSERT(r, dst[2] == 2);
+    REPORTER_ASSERT(r, dst[3] == 3);
+    REPORTER_ASSERT(r, dst[4] == 4);
+    REPORTER_ASSERT(r, dst[5] == 5);
+}
+
+DEF_TEST(Sk2f_Store4, r) {
+    Sk2f p0{0, 4};
+    Sk2f p1{1, 5};
+    Sk2f p2{2, 6};
+    Sk2f p3{3, 7};
+    float dst[8];
+    Sk2f::Store4(dst, p0, p1, p2, p3);
+    REPORTER_ASSERT(r, dst[0] == 0);
+    REPORTER_ASSERT(r, dst[1] == 1);
+    REPORTER_ASSERT(r, dst[2] == 2);
+    REPORTER_ASSERT(r, dst[3] == 3);
+    REPORTER_ASSERT(r, dst[4] == 4);
+    REPORTER_ASSERT(r, dst[5] == 5);
+    REPORTER_ASSERT(r, dst[6] == 6);
+    REPORTER_ASSERT(r, dst[7] == 7);
 }

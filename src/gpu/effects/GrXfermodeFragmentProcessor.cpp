@@ -58,8 +58,8 @@ private:
     ComposeTwoFragmentProcessor(std::unique_ptr<GrFragmentProcessor> src,
                                 std::unique_ptr<GrFragmentProcessor> dst,
                                 SkBlendMode mode)
-            : INHERITED(OptFlags(src.get(), dst.get(), mode)), fMode(mode) {
-        this->initClassID<ComposeTwoFragmentProcessor>();
+            : INHERITED(kComposeTwoFragmentProcessor_ClassID, OptFlags(src.get(), dst.get(), mode))
+            , fMode(mode) {
         SkDEBUGCODE(int shaderAChildIndex = )this->registerChildProcessor(std::move(src));
         SkDEBUGCODE(int shaderBChildIndex = )this->registerChildProcessor(std::move(dst));
         SkASSERT(0 == shaderAChildIndex);
@@ -249,7 +249,7 @@ std::unique_ptr<GrFragmentProcessor> GrXfermodeFragmentProcessor::MakeFromTwoPro
     switch (mode) {
         case SkBlendMode::kClear:
             return GrConstColorProcessor::Make(GrColor4f::TransparentBlack(),
-                                               GrConstColorProcessor::kIgnore_InputMode);
+                                               GrConstColorProcessor::InputMode::kIgnore);
         case SkBlendMode::kSrc:
             return src;
         case SkBlendMode::kDst:
@@ -421,8 +421,9 @@ private:
 private:
     ComposeOneFragmentProcessor(std::unique_ptr<GrFragmentProcessor> fp, SkBlendMode mode,
                                 Child child)
-            : INHERITED(OptFlags(fp.get(), mode, child)), fMode(mode), fChild(child) {
-        this->initClassID<ComposeOneFragmentProcessor>();
+            : INHERITED(kComposeOneFragmentProcessor_ClassID, OptFlags(fp.get(), mode, child))
+            , fMode(mode)
+            , fChild(child) {
         SkDEBUGCODE(int dstIndex =) this->registerChildProcessor(std::move(fp));
         SkASSERT(0 == dstIndex);
     }
@@ -515,7 +516,7 @@ std::unique_ptr<GrFragmentProcessor> GrXfermodeFragmentProcessor::MakeFromDstPro
     switch (mode) {
         case SkBlendMode::kClear:
             return GrConstColorProcessor::Make(GrColor4f::TransparentBlack(),
-                                               GrConstColorProcessor::kIgnore_InputMode);
+                                               GrConstColorProcessor::InputMode::kIgnore);
         case SkBlendMode::kSrc:
             return nullptr;
         default:
@@ -529,7 +530,7 @@ std::unique_ptr<GrFragmentProcessor> GrXfermodeFragmentProcessor::MakeFromSrcPro
     switch (mode) {
         case SkBlendMode::kClear:
             return GrConstColorProcessor::Make(GrColor4f::TransparentBlack(),
-                                               GrConstColorProcessor::kIgnore_InputMode);
+                                               GrConstColorProcessor::InputMode::kIgnore);
         case SkBlendMode::kDst:
             return nullptr;
         default:

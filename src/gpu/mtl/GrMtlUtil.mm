@@ -7,6 +7,8 @@
 
 #include "GrMtlUtil.h"
 
+#include "GrTypesPriv.h"
+
 bool GrPixelConfigToMTLFormat(GrPixelConfig config, MTLPixelFormat* format) {
     MTLPixelFormat dontCare;
     if (!format) {
@@ -28,9 +30,6 @@ bool GrPixelConfigToMTLFormat(GrPixelConfig config, MTLPixelFormat* format) {
         case kSBGRA_8888_GrPixelConfig:
             *format = MTLPixelFormatBGRA8Unorm_sRGB;
             return true;
-        case kRGBA_8888_sint_GrPixelConfig:
-            *format = MTLPixelFormatRGBA8Sint;
-            return true;
         case kRGB_565_GrPixelConfig:
 #ifdef SK_BUILD_FOR_IOS
             *format = MTLPixelFormatR5G6B5Unorm;
@@ -45,12 +44,18 @@ bool GrPixelConfigToMTLFormat(GrPixelConfig config, MTLPixelFormat* format) {
 #else
             return false;
 #endif
-        case kAlpha_8_GrPixelConfig:
+        case kAlpha_8_GrPixelConfig: // fall through
+        case kAlpha_8_as_Red_GrPixelConfig:
             *format = MTLPixelFormatR8Unorm;
             return true;
-        case kGray_8_GrPixelConfig:
+        case kAlpha_8_as_Alpha_GrPixelConfig:
+            return false;
+        case kGray_8_GrPixelConfig: // fall through
+        case kGray_8_as_Red_GrPixelConfig:
             *format = MTLPixelFormatR8Unorm;
             return true;
+        case kGray_8_as_Lum_GrPixelConfig:
+            return false;
         case kRGBA_float_GrPixelConfig:
             *format = MTLPixelFormatRGBA32Float;
             return true;
@@ -60,7 +65,8 @@ bool GrPixelConfigToMTLFormat(GrPixelConfig config, MTLPixelFormat* format) {
         case kRGBA_half_GrPixelConfig:
             *format = MTLPixelFormatRGBA16Float;
             return true;
-        case kAlpha_half_GrPixelConfig:
+        case kAlpha_half_GrPixelConfig: // fall through
+        case kAlpha_half_as_Red_GrPixelConfig:
             *format = MTLPixelFormatR16Float;
             return true;
     }
@@ -78,8 +84,6 @@ GrPixelConfig GrMTLFormatToPixelConfig(MTLPixelFormat format) {
             return kSRGBA_8888_GrPixelConfig;
         case MTLPixelFormatBGRA8Unorm_sRGB:
             return kSBGRA_8888_GrPixelConfig;
-        case MTLPixelFormatRGBA8Sint:
-            return kRGBA_8888_sint_GrPixelConfig;
 #ifdef SK_BUILD_FOR_IOS
         case MTLPixelFormatB5G6R5Unorm:
             return kRGB_565_GrPixelConfig;

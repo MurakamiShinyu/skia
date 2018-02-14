@@ -24,6 +24,10 @@
 
 #include <stdio.h>
 
+#ifndef GR_AA_TESSELLATOR_MAX_VERB_COUNT
+#define GR_AA_TESSELLATOR_MAX_VERB_COUNT 10
+#endif
+
 /*
  * This path renderer tessellates the path into triangles using GrTessellator, uploads the
  * triangles to a vertex buffer, and renders them with a single draw call. It can do screenspace
@@ -147,7 +151,7 @@ GrTessellatingPathRenderer::onCanDrawPath(const CanDrawPathArgs& args) const {
     if (GrAAType::kCoverage == args.fAAType) {
         SkPath path;
         args.fShape->asPath(&path);
-        if (path.countVerbs() > 10) {
+        if (path.countVerbs() > GR_AA_TESSELLATOR_MAX_VERB_COUNT) {
             return CanDrawPath::kNo;
         }
     } else if (!args.fShape->hasUnstyledKey()) {
@@ -250,7 +254,7 @@ private:
             memset(&builder[shapeKeyDataCnt], 0, sizeof(fDevClipBounds));
         }
         builder.finish();
-        sk_sp<GrBuffer> cachedVertexBuffer(rp->findAndRefTByUniqueKey<GrBuffer>(key));
+        sk_sp<GrBuffer> cachedVertexBuffer(rp->findByUniqueKey<GrBuffer>(key));
         int actualCount;
         SkScalar tol = GrPathUtils::kDefaultTolerance;
         tol = GrPathUtils::scaleToleranceToSrc(tol, fViewMatrix, fShape.bounds());

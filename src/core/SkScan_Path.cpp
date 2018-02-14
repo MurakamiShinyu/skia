@@ -13,6 +13,7 @@
 #include "SkPath.h"
 #include "SkQuadClipper.h"
 #include "SkRasterClip.h"
+#include "SkRectPriv.h"
 #include "SkRegion.h"
 #include "SkTemplates.h"
 #include "SkTSort.h"
@@ -391,10 +392,10 @@ void sk_fill_path(const SkPath& path, const SkIRect& clipRect, SkBlitter* blitte
     SkASSERT(blitter);
 
     SkIRect shiftedClip = clipRect;
-    shiftedClip.fLeft <<= shiftEdgesUp;
-    shiftedClip.fRight <<= shiftEdgesUp;
-    shiftedClip.fTop <<= shiftEdgesUp;
-    shiftedClip.fBottom <<= shiftEdgesUp;
+    shiftedClip.fLeft = SkLeftShift(shiftedClip.fLeft, shiftEdgesUp);
+    shiftedClip.fRight = SkLeftShift(shiftedClip.fRight, shiftEdgesUp);
+    shiftedClip.fTop = SkLeftShift(shiftedClip.fTop, shiftEdgesUp);
+    shiftedClip.fBottom = SkLeftShift(shiftedClip.fBottom, shiftEdgesUp);
 
     SkEdgeBuilder builder;
     int count = builder.build_edges(path, &shiftedClip, shiftEdgesUp, pathContainedInClip);
@@ -503,7 +504,7 @@ void sk_blit_below(SkBlitter* blitter, const SkIRect& ir, const SkRegion& clip) 
  *  is outside of the clip.
  */
 SkScanClipper::SkScanClipper(SkBlitter* blitter, const SkRegion* clip,
-                             const SkIRect& ir, bool skipRejectTest) {
+                             const SkIRect& ir, bool skipRejectTest, bool irPreClipped) {
     fBlitter = nullptr;     // null means blit nothing
     fClipRect = nullptr;
 
@@ -514,7 +515,7 @@ SkScanClipper::SkScanClipper(SkBlitter* blitter, const SkRegion* clip,
         }
 
         if (clip->isRect()) {
-            if (fClipRect->contains(ir)) {
+            if (!irPreClipped && fClipRect->contains(ir)) {
 #ifdef SK_DEBUG
                 fRectClipCheckBlitter.init(blitter, *fClipRect);
                 blitter = &fRectClipCheckBlitter;
@@ -522,7 +523,8 @@ SkScanClipper::SkScanClipper(SkBlitter* blitter, const SkRegion* clip,
                 fClipRect = nullptr;
             } else {
                 // only need a wrapper blitter if we're horizontally clipped
-                if (fClipRect->fLeft > ir.fLeft || fClipRect->fRight < ir.fRight) {
+                if (irPreClipped ||
+                    fClipRect->fLeft > ir.fLeft || fClipRect->fRight < ir.fRight) {
                     fRectBlitter.init(blitter, *fClipRect);
                     blitter = &fRectBlitter;
                 } else {
@@ -572,7 +574,7 @@ static const double kRoundBias = 0.0;
 static inline int round_down_to_int(SkScalar x) {
     double xx = x;
     xx -= 0.5 + kRoundBias;
-    return (int)ceil(xx);
+    return sk_double_saturate2int(ceil(xx));
 }
 
 /**
@@ -582,7 +584,7 @@ static inline int round_down_to_int(SkScalar x) {
 static inline int round_up_to_int(SkScalar x) {
     double xx = x;
     xx += 0.5 + kRoundBias;
-    return (int)floor(xx);
+    return sk_double_saturate2int(floor(xx));
 }
 
 /**
@@ -639,12 +641,21 @@ void SkScan::FillPath(const SkPath& path, const SkRegion& origClip,
     }
         // don't reference "origClip" any more, just use clipPtr
 
+
+    SkRect bounds = path.getBounds();
+    bool irPreClipped = false;
+    if (!SkRectPriv::MakeLargeS32().contains(bounds)) {
+        if (!bounds.intersect(SkRectPriv::MakeLargeS32())) {
+            bounds.setEmpty();
+        }
+        irPreClipped = true;
+    }
     SkIRect ir;
     // We deliberately call round_asymmetric_to_int() instead of round(), since we can't afford
     // to generate a bounds that is tighter than the corresponding SkEdges. The edge code basically
     // converts the floats to fixed, and then "rounds". If we called round() instead of
     // round_asymmetric_to_int() here, we could generate the wrong ir for values like 0.4999997.
-    round_asymmetric_to_int(path.getBounds(), &ir);
+    round_asymmetric_to_int(bounds, &ir);
     if (ir.isEmpty()) {
         if (path.isInverseFillType()) {
             blitter->blitRegion(*clipPtr);
@@ -652,7 +663,7 @@ void SkScan::FillPath(const SkPath& path, const SkRegion& origClip,
         return;
     }
 
-    SkScanClipper clipper(blitter, clipPtr, ir, path.isInverseFillType());
+    SkScanClipper clipper(blitter, clipPtr, ir, path.isInverseFillType(), irPreClipped);
 
     blitter = clipper.getBlitter();
     if (blitter) {
@@ -748,9 +759,19 @@ void SkScan::FillTriangle(const SkPoint pts[], const SkRasterClip& clip,
     }
 
     SkRect  r;
-    SkIRect ir;
     r.set(pts, 3);
-    r.round(&ir);
+    // If r is too large (larger than can easily fit in SkFixed) then we need perform geometric
+    // clipping. This is a bit of work, so we just call the general FillPath() to handle it.
+    // Use FixedMax/2 as the limit so we can subtract two edges and still store that in Fixed.
+    const SkScalar limit = SK_MaxS16 >> 1;
+    if (!SkRect::MakeLTRB(-limit, -limit, limit, limit).contains(r)) {
+        SkPath path;
+        path.addPoly(pts, 3, false);
+        FillPath(path, clip, blitter);
+        return;
+    }
+
+    SkIRect ir = r.round();
     if (ir.isEmpty() || !SkIRect::Intersects(ir, clip.getBounds())) {
         return;
     }

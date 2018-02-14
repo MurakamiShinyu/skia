@@ -168,7 +168,6 @@ GrProcessorSet::Analysis GrProcessorSet::finalize(const GrProcessorAnalysisColor
     GrProcessorSet::Analysis analysis;
     analysis.fCompatibleWithCoverageAsAlpha = GrProcessorAnalysisCoverage::kLCD != coverageInput;
 
-    const GrFragmentProcessor* clipFP = clip ? clip->clipCoverageFragmentProcessor() : nullptr;
     const std::unique_ptr<const GrFragmentProcessor>* fps =
             fFragmentProcessors.get() + fFragmentProcessorOffset;
     GrColorFragmentProcessorAnalysis colorAnalysis(
@@ -182,17 +181,16 @@ GrProcessorSet::Analysis GrProcessorSet::finalize(const GrProcessorAnalysisColor
     for (int i = 0; i < n; ++i) {
         if (!fps[i]->compatibleWithCoverageAsAlpha()) {
             analysis.fCompatibleWithCoverageAsAlpha = false;
-            // Other than tests that exercise atypical behavior we expect all coverage FPs to be
-            // compatible with the coverage-as-alpha optimization.
-            GrCapsDebugf(&caps, "Coverage FP is not compatible with coverage as alpha.\n");
         }
         coverageUsesLocalCoords |= fps[i]->usesLocalCoords();
     }
-
-    if (clipFP) {
-        analysis.fCompatibleWithCoverageAsAlpha &= clipFP->compatibleWithCoverageAsAlpha();
-        coverageUsesLocalCoords |= clipFP->usesLocalCoords();
-        hasCoverageFP = true;
+    if (clip) {
+        hasCoverageFP = hasCoverageFP || clip->numClipCoverageFragmentProcessors();
+        for (int i = 0; i < clip->numClipCoverageFragmentProcessors(); ++i) {
+            const GrFragmentProcessor* clipFP = clip->clipCoverageFragmentProcessor(i);
+            analysis.fCompatibleWithCoverageAsAlpha &= clipFP->compatibleWithCoverageAsAlpha();
+            coverageUsesLocalCoords |= clipFP->usesLocalCoords();
+        }
     }
     int colorFPsToEliminate = colorAnalysis.initialProcessorsToEliminate(overrideInputColor);
     analysis.fInputColorType = static_cast<Analysis::PackedInputColorType>(

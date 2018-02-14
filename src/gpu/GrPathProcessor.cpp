@@ -56,7 +56,7 @@ public:
 
             SkString strVaryingName;
             strVaryingName.printf("TransformedCoord_%d", i);
-            GrGLSLVertToFrag v(varyingType);
+            GrGLSLVarying v(varyingType);
             GrGLVaryingHandler* glVaryingHandler = (GrGLVaryingHandler*) varyingHandler;
             fInstalledTransforms.push_back().fHandle =
                     glVaryingHandler->addPathProcessingVarying(strVaryingName.c_str(),
@@ -115,11 +115,10 @@ private:
 GrPathProcessor::GrPathProcessor(GrColor color,
                                  const SkMatrix& viewMatrix,
                                  const SkMatrix& localMatrix)
-        : fColor(color)
+        : INHERITED(kGrPathProcessor_ClassID)
+        , fColor(color)
         , fViewMatrix(viewMatrix)
-        , fLocalMatrix(localMatrix) {
-    this->initClassID<GrPathProcessor>();
-}
+        , fLocalMatrix(localMatrix) {}
 
 void GrPathProcessor::getGLSLProcessorKey(const GrShaderCaps& caps,
                                           GrProcessorKeyBuilder* b) const {

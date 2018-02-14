@@ -11,7 +11,7 @@
 #include "glsl/GrGLSLGeometryProcessor.h"
 #include "glsl/GrGLSLUniformHandler.h"
 #include "glsl/GrGLSLVarying.h"
-#include "glsl/GrGLSLVertexShaderBuilder.h"
+#include "glsl/GrGLSLVertexGeoBuilder.h"
 
 class GrGLSLRRectShadowGeoProc : public GrGLSLGeometryProcessor {
 public:
@@ -39,8 +39,7 @@ public:
         this->emitTransforms(vertBuilder,
                              varyingHandler,
                              uniformHandler,
-                             gpArgs->fPositionVar,
-                             rsgp.inPosition()->fName,
+                             rsgp.inPosition()->asShaderVar(),
                              args.fFPCoordTransformHandler);
 
         fragBuilder->codeAppend("half d = length(shadowParams.xy);");
@@ -63,8 +62,8 @@ private:
 
 ///////////////////////////////////////////////////////////////////////////////
 
-GrRRectShadowGeoProc::GrRRectShadowGeoProc() {
-    this->initClassID<GrRRectShadowGeoProc>();
+GrRRectShadowGeoProc::GrRRectShadowGeoProc()
+: INHERITED(kGrRRectShadowGeoProc_ClassID) {
     fInPosition = &this->addVertexAttrib("inPosition", kFloat2_GrVertexAttribType);
     fInColor = &this->addVertexAttrib("inColor", kUByte4_norm_GrVertexAttribType);
     fInShadowParams = &this->addVertexAttrib("inShadowParams", kHalf4_GrVertexAttribType);

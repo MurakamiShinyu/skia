@@ -9,11 +9,11 @@
 #include "SkTypes.h"
 
 #if SK_SUPPORT_GPU
-#ifndef SK_DISABLE_DEFERRED_PROXIES
 #include "Test.h"
 
 #include "GrContextPriv.h"
 #include "GrGpu.h"
+#include "GrProxyProvider.h"
 #include "GrResourceAllocator.h"
 #include "GrResourceProvider.h"
 #include "GrSurfaceProxyPriv.h"
@@ -31,8 +31,7 @@ struct ProxyParams {
     // TODO: do we care about mipmapping
 };
 
-static sk_sp<GrSurfaceProxy> make_deferred(GrResourceProvider* resourceProvider,
-                                           const ProxyParams& p) {
+static sk_sp<GrSurfaceProxy> make_deferred(GrProxyProvider* proxyProvider, const ProxyParams& p) {
     GrSurfaceDesc desc;
     desc.fFlags = p.fIsRT ? kRenderTarget_GrSurfaceFlag : kNone_GrSurfaceFlags;
     desc.fOrigin = p.fOrigin;
@@ -41,26 +40,23 @@ static sk_sp<GrSurfaceProxy> make_deferred(GrResourceProvider* resourceProvider,
     desc.fConfig = p.fConfig;
     desc.fSampleCnt = p.fSampleCnt;
 
-    return GrSurfaceProxy::MakeDeferred(resourceProvider, desc, p.fFit, SkBudgeted::kNo);
+    return proxyProvider->createProxy(desc, p.fFit, SkBudgeted::kNo);
 }
 
 static sk_sp<GrSurfaceProxy> make_backend(GrContext* context, const ProxyParams& p,
-                                          GrBackendObject* backendTexHandle) {
-    *backendTexHandle = context->getGpu()->createTestingOnlyBackendTexture(
-                                                            nullptr, p.fSize, p.fSize, p.fConfig);
-    GrBackendTexture backendTex = GrTest::CreateBackendTexture(context->contextPriv().getBackend(),
-                                                               p.fSize,
-                                                               p.fSize,
-                                                               p.fConfig,
-                                                               *backendTexHandle);
+                                          GrBackendTexture* backendTex) {
+    GrProxyProvider* proxyProvider = context->contextPriv().proxyProvider();
+    GrGpu* gpu = context->contextPriv().getGpu();
 
-    sk_sp<GrSurface> tex = context->resourceProvider()->wrapBackendTexture(backendTex,
-                                                                           kBorrow_GrWrapOwnership);
-    return GrSurfaceProxy::MakeWrapped(std::move(tex), p.fOrigin);
+    *backendTex = gpu->createTestingOnlyBackendTexture(nullptr, p.fSize, p.fSize,
+                                                       p.fConfig, false,
+                                                       GrMipMapped::kNo);
+
+    return proxyProvider->createWrappedTextureProxy(*backendTex, p.fOrigin);
 }
 
-static void cleanup_backend(GrContext* context, GrBackendObject* backendTexHandle) {
-    context->getGpu()->deleteTestingOnlyBackendTexture(*backendTexHandle);
+static void cleanup_backend(GrContext* context, GrBackendTexture* backendTex) {
+    context->contextPriv().getGpu()->deleteTestingOnlyBackendTexture(backendTex);
 }
 
 // Basic test that two proxies with overlapping intervals and compatible descriptors are
@@ -72,8 +68,12 @@ static void overlap_test(skiatest::Reporter* reporter, GrResourceProvider* resou
 
     alloc.addInterval(p1.get(), 0, 4);
     alloc.addInterval(p2.get(), 1, 2);
+    alloc.markEndOfOpList(0);
 
-    alloc.assign();
+    int startIndex, stopIndex;
+    GrResourceAllocator::AssignError error;
+    alloc.assign(&startIndex, &stopIndex, &error);
+    REPORTER_ASSERT(reporter, GrResourceAllocator::AssignError::kNoError == error);
 
     REPORTER_ASSERT(reporter, p1->priv().peekSurface());
     REPORTER_ASSERT(reporter, p2->priv().peekSurface());
@@ -90,8 +90,12 @@ static void non_overlap_test(skiatest::Reporter* reporter, GrResourceProvider* r
 
     alloc.addInterval(p1.get(), 0, 2);
     alloc.addInterval(p2.get(), 3, 5);
+    alloc.markEndOfOpList(0);
 
-    alloc.assign();
+    int startIndex, stopIndex;
+    GrResourceAllocator::AssignError error;
+    alloc.assign(&startIndex, &stopIndex, &error);
+    REPORTER_ASSERT(reporter, GrResourceAllocator::AssignError::kNoError == error);
 
     REPORTER_ASSERT(reporter, p1->priv().peekSurface());
     REPORTER_ASSERT(reporter, p2->priv().peekSurface());
@@ -99,8 +103,17 @@ static void non_overlap_test(skiatest::Reporter* reporter, GrResourceProvider* r
     REPORTER_ASSERT(reporter, expectedResult == doTheBackingStoresMatch);
 }
 
+bool GrResourceProvider::testingOnly_setExplicitlyAllocateGPUResources(bool newValue) {
+    bool oldValue = fExplicitlyAllocateGPUResources;
+    fExplicitlyAllocateGPUResources = newValue;
+    return oldValue;
+}
+
 DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ResourceAllocatorTest, reporter, ctxInfo) {
-    GrResourceProvider* resourceProvider = ctxInfo.grContext()->resourceProvider();
+    GrProxyProvider* proxyProvider = ctxInfo.grContext()->contextPriv().proxyProvider();
+    GrResourceProvider* resourceProvider = ctxInfo.grContext()->contextPriv().resourceProvider();
+
+    bool orig = resourceProvider->testingOnly_setExplicitlyAllocateGPUResources(true);
 
     struct TestCase {
         ProxyParams   fP1;
@@ -136,13 +149,14 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ResourceAllocatorTest, reporter, ctxInfo) {
     };
 
     for (auto test : gOverlappingTests) {
-        sk_sp<GrSurfaceProxy> p1 = make_deferred(resourceProvider, test.fP1);
-        sk_sp<GrSurfaceProxy> p2 = make_deferred(resourceProvider, test.fP2);
-        overlap_test(reporter, resourceProvider, std::move(p1), std::move(p2), test.fExpectation);
+        sk_sp<GrSurfaceProxy> p1 = make_deferred(proxyProvider, test.fP1);
+        sk_sp<GrSurfaceProxy> p2 = make_deferred(proxyProvider, test.fP2);
+        overlap_test(reporter, resourceProvider,
+                     std::move(p1), std::move(p2), test.fExpectation);
     }
 
-    int k2 = ctxInfo.grContext()->caps()->getSampleCount(2, kRGBA);
-    int k4 = ctxInfo.grContext()->caps()->getSampleCount(4, kRGBA);
+    int k2 = ctxInfo.grContext()->caps()->getRenderTargetSampleCount(2, kRGBA);
+    int k4 = ctxInfo.grContext()->caps()->getRenderTargetSampleCount(4, kRGBA);
 
     //--------------------------------------------------------------------------------------------
     TestCase gNonOverlappingTests[] = {
@@ -174,13 +188,13 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ResourceAllocatorTest, reporter, ctxInfo) {
     };
 
     for (auto test : gNonOverlappingTests) {
-        sk_sp<GrSurfaceProxy> p1 = make_deferred(resourceProvider, test.fP1);
-        sk_sp<GrSurfaceProxy> p2 = make_deferred(resourceProvider, test.fP2);
+        sk_sp<GrSurfaceProxy> p1 = make_deferred(proxyProvider, test.fP1);
+        sk_sp<GrSurfaceProxy> p2 = make_deferred(proxyProvider, test.fP2);
         if (!p1 || !p2) {
             continue; // creation can fail (i.e., for msaa4 on iOS)
         }
-        non_overlap_test(reporter, resourceProvider, std::move(p1), std::move(p2),
-                         test.fExpectation);
+        non_overlap_test(reporter, resourceProvider,
+                         std::move(p1), std::move(p2), test.fExpectation);
     }
 
     {
@@ -189,14 +203,15 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(ResourceAllocatorTest, reporter, ctxInfo) {
             { { 64, kNotRT, kRGBA, kE, 0, kTL }, { 64, kNotRT, kRGBA, kE, 0, kTL }, kDontShare }
         };
 
-        GrBackendObject backEndObj;
-        sk_sp<GrSurfaceProxy> p1 = make_backend(ctxInfo.grContext(), t[0].fP1, &backEndObj);
-        sk_sp<GrSurfaceProxy> p2 = make_deferred(resourceProvider, t[0].fP2);
-        non_overlap_test(reporter, resourceProvider, std::move(p1), std::move(p2),
-                         t[0].fExpectation);
-        cleanup_backend(ctxInfo.grContext(), &backEndObj);
+        GrBackendTexture backEndTex;
+        sk_sp<GrSurfaceProxy> p1 = make_backend(ctxInfo.grContext(), t[0].fP1, &backEndTex);
+        sk_sp<GrSurfaceProxy> p2 = make_deferred(proxyProvider, t[0].fP2);
+        non_overlap_test(reporter, resourceProvider,
+                         std::move(p1), std::move(p2), t[0].fExpectation);
+        cleanup_backend(ctxInfo.grContext(), &backEndTex);
     }
+
+    resourceProvider->testingOnly_setExplicitlyAllocateGPUResources(orig);
 }
 
-#endif
 #endif

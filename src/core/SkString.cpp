@@ -196,8 +196,7 @@ char* SkStrAppendFloat(char string[], float value) {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-// the 3 values are [length] [refcnt] [terminating zero data]
-const SkString::Rec SkString::gEmptyRec = { 0, {0}, 0 };
+const SkString::Rec SkString::gEmptyRec(0, 0);
 
 #define SizeOfRec()     (gEmptyRec.data() - (const char*)&gEmptyRec)
 
@@ -221,40 +220,39 @@ static size_t check_add32(size_t base, size_t extra) {
 }
 
 sk_sp<SkString::Rec> SkString::Rec::Make(const char text[], size_t len) {
-    Rec* rec;
-
     if (0 == len) {
-        rec = const_cast<Rec*>(&gEmptyRec);
-    } else {
-        len = trim_size_t_to_u32(len);
-
-        // add 1 for terminating 0, then align4 so we can have some slop when growing the string
-        rec = (Rec*)sk_malloc_throw(SizeOfRec() + SkAlign4(len + 1));
-        rec->fLength = SkToU32(len);
-        rec->fRefCnt.store(+1, std::memory_order_relaxed);
-        if (text) {
-            memcpy(rec->data(), text, len);
-        }
-        rec->data()[len] = 0;
+        return sk_sp<SkString::Rec>(const_cast<Rec*>(&gEmptyRec));
     }
-    return sk_sp<SkString::Rec>(rec);
+
+    len = trim_size_t_to_u32(len);
+    // add 1 for terminating 0, then align4 so we can have some slop when growing the string
+    const size_t actualLength = SizeOfRec() + SkAlign4(len + 1);
+    SkASSERT_RELEASE(len < actualLength);  // Check for overflow.
+
+    void* storage = ::operator new (actualLength);
+    sk_sp<Rec> rec(new (storage) Rec(SkToU32(len), 1));
+    if (text) {
+        memcpy(rec->data(), text, len);
+    }
+    rec->data()[len] = 0;
+    return rec;
 }
 
 void SkString::Rec::ref() const {
     if (this == &SkString::gEmptyRec) {
         return;
     }
-    // No barrier required.
-    (void)this->fRefCnt.fetch_add(+1, std::memory_order_relaxed);
+    SkAssertResult(this->fRefCnt.fetch_add(+1, std::memory_order_relaxed));
 }
 
 void SkString::Rec::unref() const {
     if (this == &SkString::gEmptyRec) {
         return;
     }
-    SkASSERT(this->fRefCnt.load(std::memory_order_relaxed) > 0);
-    if (1 == this->fRefCnt.fetch_add(-1, std::memory_order_acq_rel)) {
-        sk_free(const_cast<SkString::Rec*>(this));
+    int32_t oldRefCnt = this->fRefCnt.fetch_add(-1, std::memory_order_acq_rel);
+    SkASSERT(oldRefCnt);
+    if (1 == oldRefCnt) {
+        delete this;
     }
 }
 

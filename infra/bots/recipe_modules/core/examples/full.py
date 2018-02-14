@@ -15,7 +15,7 @@ def RunSteps(api):
 
 
 def GenTests(api):
-  buildername = 'Build-Win-MSVC-x86_64-Release-Vulkan'
+  buildername = 'Build-Win-Clang-x86_64-Release-Vulkan'
   yield (
       api.test('test') +
       api.properties(buildername=buildername,
@@ -31,7 +31,35 @@ def GenTests(api):
       )
     )
 
-  buildername = 'Test-Win10-MSVC-NUC6i5SYK-GPU-IntelIris540-x86_64-Debug-ANGLE'
+  buildername = 'Build-Win-Clang-x86_64-Release-ParentRevision'
+  yield (
+      api.test('parent_revision') +
+      api.properties(buildername=buildername,
+                     repository='https://skia.googlesource.com/skia.git',
+                     revision='abc123',
+                     path_config='kitchen',
+                     swarm_out_dir='[SWARM_OUT_DIR]')
+  )
+
+  yield (
+      api.test('parent_revision_trybot') +
+      api.properties(buildername=buildername,
+                     repository='https://skia.googlesource.com/skia.git',
+                     revision='abc123',
+                     path_config='kitchen',
+                     swarm_out_dir='[SWARM_OUT_DIR]',
+                     patch_issue=500,
+                     patch_set=1,
+                     patch_storage='gerrit') +
+      api.properties.tryserver(
+          buildername=buildername,
+          gerrit_project='skia',
+          gerrit_url='https://skia-review.googlesource.com/',
+      )
+  )
+
+  buildername = ('Test-Win10-Clang-NUC6i5SYK-GPU-IntelIris540-x86_64-' +
+                 'Debug-All-ANGLE')
   yield (
       api.test('no_persistent_checkout') +
       api.properties(buildername=buildername,

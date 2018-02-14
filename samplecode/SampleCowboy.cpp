@@ -29,20 +29,21 @@ public:
 
 protected:
     static constexpr auto kAnimationIterations = 5;
-    
+
     enum State {
         kZoomIn,
         kScroll,
         kZoomOut
     };
-    
+
     void onOnceBeforeDraw() override {
-        fPath = GetResourcePath("Cowboy.svg");
-        SkFILEStream svgStream(fPath.c_str());
-        if (!svgStream.isValid()) {
-            SkDebugf("file not found: \"path\"\n", fPath.c_str());
+        constexpr char path[] = "Cowboy.svg";
+        auto data = GetResourceAsData(path);
+        if (!data) {
+            SkDebugf("file not found: \"%s\"\n", path);
             return;
         }
+        SkMemoryStream svgStream(std::move(data));
 
         SkDOM xmlDom;
         if (!xmlDom.build(svgStream)) {
@@ -79,7 +80,7 @@ protected:
                     canvas->concat(SkMatrix::MakeScale(fDelta));
                     break;
             }
-            
+
             fDom->render(canvas);
         }
     }
@@ -100,12 +101,12 @@ protected:
 
         return this->INHERITED::onQuery(evt);
     }
-    
+
     bool onAnimate(const SkAnimTimer& timer) override {
         if (!fDom) {
             return false;
         }
-        
+
         --fAnimationLoop;
         if (fAnimationLoop == 0) {
             fAnimationLoop = kAnimationIterations;
@@ -126,7 +127,7 @@ protected:
         }
         return true;
     }
-    
+
 private:
     sk_sp<SkSVGDOM> fDom;
     SkString        fPath;

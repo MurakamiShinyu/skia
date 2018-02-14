@@ -8,7 +8,6 @@
 #include "GrNonlinearColorSpaceXformEffect.h"
 #include "GrColorSpaceXform.h"
 #include "GrProcessor.h"
-#include "SkColorSpace_Base.h"
 #include "glsl/GrGLSLFragmentProcessor.h"
 #include "glsl/GrGLSLFragmentShaderBuilder.h"
 
@@ -138,10 +137,10 @@ private:
 GrNonlinearColorSpaceXformEffect::GrNonlinearColorSpaceXformEffect(
     uint32_t ops, const SkColorSpaceTransferFn& srcTransferFn,
     const SkColorSpaceTransferFn& dstTransferFn, const SkMatrix44& gamutXform)
-        : INHERITED(kPreservesOpaqueInput_OptimizationFlag)
+        : INHERITED(kGrNonlinearColorSpaceXformEffect_ClassID,
+                    kPreservesOpaqueInput_OptimizationFlag)
         , fGamutXform(gamutXform)
         , fOps(ops) {
-    this->initClassID<GrNonlinearColorSpaceXformEffect>();
 
     fSrcTransferFnCoeffs[0] = srcTransferFn.fA;
     fSrcTransferFnCoeffs[1] = srcTransferFn.fB;
@@ -162,10 +161,10 @@ GrNonlinearColorSpaceXformEffect::GrNonlinearColorSpaceXformEffect(
 
 GrNonlinearColorSpaceXformEffect::GrNonlinearColorSpaceXformEffect(
         const GrNonlinearColorSpaceXformEffect& that)
-        : INHERITED(kPreservesOpaqueInput_OptimizationFlag)
+        : INHERITED(kGrNonlinearColorSpaceXformEffect_ClassID,
+                    kPreservesOpaqueInput_OptimizationFlag)
         , fGamutXform(that.fGamutXform)
         , fOps(that.fOps) {
-    this->initClassID<GrNonlinearColorSpaceXformEffect>();
     memcpy(fSrcTransferFnCoeffs, that.fSrcTransferFnCoeffs, sizeof(fSrcTransferFnCoeffs));
     memcpy(fDstTransferFnCoeffs, that.fDstTransferFnCoeffs, sizeof(fDstTransferFnCoeffs));
 }
@@ -229,11 +228,11 @@ std::unique_ptr<GrFragmentProcessor> GrNonlinearColorSpaceXformEffect::Make(
     uint32_t ops = 0;
 
     // We rely on GrColorSpaceXform to build the gamut xform matrix for us (to get caching)
-    auto gamutXform = GrColorSpaceXform::Make(src, dst);
+    auto gamutXform = GrColorSpaceXform::MakeGamutXform(src, dst);
     SkMatrix44 srcToDstMtx(SkMatrix44::kUninitialized_Constructor);
     if (gamutXform) {
         ops |= kGamutXform_Op;
-        srcToDstMtx = gamutXform->srcToDst();
+        srcToDstMtx = gamutXform->gamutXform();
     }
 
     SkColorSpaceTransferFn srcTransferFn;

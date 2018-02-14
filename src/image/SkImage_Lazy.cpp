@@ -10,7 +10,6 @@
 
 #include "SkBitmap.h"
 #include "SkBitmapCache.h"
-#include "SkColorSpace_Base.h"
 #include "SkData.h"
 #include "SkImageGenerator.h"
 #include "SkImagePriv.h"
@@ -23,7 +22,7 @@
 #include "GrGpuResourcePriv.h"
 #include "GrImageTextureMaker.h"
 #include "GrResourceKey.h"
-#include "GrResourceProvider.h"
+#include "GrProxyProvider.h"
 #include "GrSamplerState.h"
 #include "GrYUVProvider.h"
 #include "SkGr.h"
@@ -268,9 +267,8 @@ struct CacheCaps {
 
 #if SK_SUPPORT_GPU
     bool supportsHalfFloat() const {
-        return !fCaps ||
-            (fCaps->isConfigTexturable(kRGBA_half_GrPixelConfig) &&
-             fCaps->isConfigRenderable(kRGBA_half_GrPixelConfig, false));
+        return !fCaps || (fCaps->isConfigTexturable(kRGBA_half_GrPixelConfig) &&
+                          fCaps->isConfigRenderable(kRGBA_half_GrPixelConfig));
     }
 
     bool supportsSRGB() const {
@@ -303,6 +301,9 @@ SkImageCacherator::CachedFormat SkImage_Lazy::chooseCacheFormat(SkColorSpace* ds
         case kAlpha_8_SkColorType:
         case kRGB_565_SkColorType:
         case kARGB_4444_SkColorType:
+        case kRGB_888x_SkColorType:
+        case kRGBA_1010102_SkColorType:
+        case kRGB_101010x_SkColorType:
             // We don't support color space on these formats, so always decode in legacy mode:
             // TODO: Ask the codec to decode these to something else (at least sRGB 8888)?
             return kLegacy_CachedFormat;
@@ -390,7 +391,7 @@ SkImageInfo SkImage_Lazy::buildCacheInfo(CachedFormat format) const {
             return fInfo.makeColorSpace(nullptr);
         case kLinearF16_CachedFormat:
             return fInfo.makeColorType(kRGBA_F16_SkColorType)
-                        .makeColorSpace(as_CSB(fInfo.colorSpace())->makeLinearGamma());
+                        .makeColorSpace(fInfo.colorSpace()->makeLinearGamma());
         case kSRGB8888_CachedFormat:
             // If the transfer function is nearly (but not exactly) sRGB, we don't want the codec
             // to bother trans-coding. It would be slow, and do more harm than good visually,
@@ -399,7 +400,7 @@ SkImageInfo SkImage_Lazy::buildCacheInfo(CachedFormat format) const {
                 return fInfo.makeColorType(kRGBA_8888_SkColorType);
             } else {
                 return fInfo.makeColorType(kRGBA_8888_SkColorType)
-                            .makeColorSpace(as_CSB(fInfo.colorSpace())->makeSRGBGamma());
+                            .makeColorSpace(fInfo.colorSpace()->makeSRGBGamma());
             }
         case kSBGR8888_CachedFormat:
             // See note above about not-quite-sRGB transfer functions.
@@ -407,7 +408,7 @@ SkImageInfo SkImage_Lazy::buildCacheInfo(CachedFormat format) const {
                 return fInfo.makeColorType(kBGRA_8888_SkColorType);
             } else {
                 return fInfo.makeColorType(kBGRA_8888_SkColorType)
-                            .makeColorSpace(as_CSB(fInfo.colorSpace())->makeSRGBGamma());
+                            .makeColorSpace(fInfo.colorSpace()->makeSRGBGamma());
             }
         default:
             SkDEBUGFAIL("Invalid cached format");
@@ -695,19 +696,20 @@ public:
     }
 };
 
-static void set_key_on_proxy(GrResourceProvider* resourceProvider,
+static void set_key_on_proxy(GrProxyProvider* proxyProvider,
                              GrTextureProxy* proxy, GrTextureProxy* originalProxy,
                              const GrUniqueKey& key) {
     if (key.isValid()) {
         SkASSERT(proxy->origin() == kTopLeft_GrSurfaceOrigin);
         if (originalProxy) {
-            SkASSERT(proxy->isMipMapped() && !originalProxy->isMipMapped());
+            SkASSERT(GrMipMapped::kYes == proxy->mipMapped() &&
+                     GrMipMapped::kNo == originalProxy->mipMapped());
             // If we had an originalProxy, that means there already is a proxy in the cache which
             // matches the key, but it does not have mip levels and we require them. Thus we must
             // remove the unique key from that proxy.
-            resourceProvider->removeUniqueKeyFromProxy(key, originalProxy);
+            proxyProvider->removeUniqueKeyFromProxy(key, originalProxy);
         }
-        resourceProvider->assignUniqueKeyToProxy(key, proxy);
+        proxyProvider->assignUniqueKeyToProxy(key, proxy);
     }
 }
 
@@ -759,16 +761,16 @@ sk_sp<GrTextureProxy> SkImage_Lazy::lockTextureProxy(GrContext* ctx,
     GrUniqueKey key;
     this->makeCacheKeyFromOrigKey(origKey, format, &key);
 
+    GrProxyProvider* proxyProvider = ctx->contextPriv().proxyProvider();
     sk_sp<GrTextureProxy> proxy;
 
     // 1. Check the cache for a pre-existing one
     if (key.isValid()) {
-        proxy = ctx->resourceProvider()->findOrCreateProxyByUniqueKey(key,
-                                                                      kTopLeft_GrSurfaceOrigin);
+        proxy = proxyProvider->findOrCreateProxyByUniqueKey(key, kTopLeft_GrSurfaceOrigin);
         if (proxy) {
             SK_HISTOGRAM_ENUMERATION("LockTexturePath", kPreExisting_LockTexturePath,
                                      kLockTexturePathCount);
-            if (!willBeMipped || proxy->isMipMapped()) {
+            if (!willBeMipped || GrMipMapped::kYes == proxy->mipMapped()) {
                 return proxy;
             }
         }
@@ -788,21 +790,20 @@ sk_sp<GrTextureProxy> SkImage_Lazy::lockTextureProxy(GrContext* ctx,
                 SkImageGenerator::TexGenType::kCheap != generator->onCanGenerateTexture()) {
             return nullptr;
         }
-        // TODO: Pass a flag into generateTexture which says we want to be mipped. If the generator
-        // can handle creating a mipped surface, then it can either generate the base layer or all
-        // the layers directly. Otherwise it just returns a non mipped surface as it currently does.
-        if ((proxy = generator->generateTexture(ctx, genPixelsInfo, fOrigin, behavior))) {
+        if ((proxy = generator->generateTexture(ctx, genPixelsInfo, fOrigin, behavior,
+                                                willBeMipped))) {
             SK_HISTOGRAM_ENUMERATION("LockTexturePath", kNative_LockTexturePath,
                                      kLockTexturePathCount);
-            set_key_on_proxy(ctx->resourceProvider(), proxy.get(), nullptr, key);
-            if (!willBeMipped || proxy->isMipMapped()) {
+            set_key_on_proxy(proxyProvider, proxy.get(), nullptr, key);
+            if (!willBeMipped || GrMipMapped::kYes == proxy->mipMapped()) {
                 return proxy;
             }
         }
     }
 
-    // 3. Ask the generator to return YUV planes, which the GPU can convert
-    if (!proxy && !ctx->contextPriv().disableGpuYUVConversion()) {
+    // 3. Ask the generator to return YUV planes, which the GPU can convert. If we will be mipping
+    //    the texture we fall through here and have the CPU generate the mip maps for us.
+    if (!proxy && !willBeMipped && !ctx->contextPriv().disableGpuYUVConversion()) {
         const GrSurfaceDesc desc = GrImageInfoToSurfaceDesc(cacheInfo, *ctx->caps());
         ScopedGenerator generator(fSharedGenerator);
         Generator_GrYUVProvider provider(generator);
@@ -816,14 +817,12 @@ sk_sp<GrTextureProxy> SkImage_Lazy::lockTextureProxy(GrContext* ctx,
 
         // TODO: Update to create the mipped surface in the YUV generator and draw the base layer
         // directly into the mipped surface.
-        proxy = provider.refAsTextureProxy(ctx, desc, true, generatorColorSpace, thisColorSpace);
+        proxy = provider.refAsTextureProxy(ctx, desc, generatorColorSpace, thisColorSpace);
         if (proxy) {
             SK_HISTOGRAM_ENUMERATION("LockTexturePath", kYUV_LockTexturePath,
                                      kLockTexturePathCount);
-            set_key_on_proxy(ctx->resourceProvider(), proxy.get(), nullptr, key);
-            if (!willBeMipped || proxy->isMipMapped()) {
-                return proxy;
-            }
+            set_key_on_proxy(proxyProvider, proxy.get(), nullptr, key);
+            return proxy;
         }
     }
 
@@ -831,15 +830,15 @@ sk_sp<GrTextureProxy> SkImage_Lazy::lockTextureProxy(GrContext* ctx,
     SkBitmap bitmap;
     if (!proxy && this->lockAsBitmap(&bitmap, chint, format, genPixelsInfo, behavior)) {
         if (willBeMipped) {
-            proxy = GrGenerateMipMapsAndUploadToTextureProxy(ctx, bitmap, dstColorSpace);
+            proxy = proxyProvider->createMipMapProxyFromBitmap(bitmap, dstColorSpace);
         }
         if (!proxy) {
-            proxy = GrUploadBitmapToTextureProxy(ctx->resourceProvider(), bitmap, dstColorSpace);
+            proxy = GrUploadBitmapToTextureProxy(proxyProvider, bitmap, dstColorSpace);
         }
-        if (proxy && (!willBeMipped || proxy->isMipMapped())) {
+        if (proxy && (!willBeMipped || GrMipMapped::kYes == proxy->mipMapped())) {
             SK_HISTOGRAM_ENUMERATION("LockTexturePath", kRGBA_LockTexturePath,
                                      kLockTexturePathCount);
-            set_key_on_proxy(ctx->resourceProvider(), proxy.get(), nullptr, key);
+            set_key_on_proxy(proxyProvider, proxy.get(), nullptr, key);
             return proxy;
         }
     }
@@ -850,9 +849,9 @@ sk_sp<GrTextureProxy> SkImage_Lazy::lockTextureProxy(GrContext* ctx,
         // mipped surface and copy the original proxy into the base layer. We will then let the gpu
         // generate the rest of the mips.
         SkASSERT(willBeMipped);
-        SkASSERT(!proxy->isMipMapped());
-        if (auto mippedProxy = GrCopyBaseMipMapToTextureProxy(ctx, proxy.get(), dstColorSpace)) {
-            set_key_on_proxy(ctx->resourceProvider(), mippedProxy.get(), proxy.get(), key);
+        SkASSERT(GrMipMapped::kNo == proxy->mipMapped());
+        if (auto mippedProxy = GrCopyBaseMipMapToTextureProxy(ctx, proxy.get())) {
+            set_key_on_proxy(proxyProvider, mippedProxy.get(), proxy.get(), key);
             return mippedProxy;
         }
         // We failed to make a mipped proxy with the base copied into it. This could have

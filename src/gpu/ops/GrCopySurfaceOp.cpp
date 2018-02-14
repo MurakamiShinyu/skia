@@ -64,9 +64,6 @@ std::unique_ptr<GrOp> GrCopySurfaceOp::Make(GrSurfaceProxy* dstProxy, GrSurfaceP
                                             const SkIPoint& dstPoint) {
     SkASSERT(dstProxy);
     SkASSERT(srcProxy);
-    if (GrPixelConfigIsSint(dstProxy->config()) != GrPixelConfigIsSint(srcProxy->config())) {
-        return nullptr;
-    }
     SkIRect clippedSrcRect;
     SkIPoint clippedDstPoint;
     // If the rect is outside the srcProxy or dstProxy then we've already succeeded.
@@ -80,8 +77,7 @@ std::unique_ptr<GrOp> GrCopySurfaceOp::Make(GrSurfaceProxy* dstProxy, GrSurfaceP
 }
 
 void GrCopySurfaceOp::onExecute(GrOpFlushState* state) {
-    if (!fDst.get()->instantiate(state->resourceProvider()) ||
-        !fSrc.get()->instantiate(state->resourceProvider())) {
+    if (!fSrc.get()->instantiate(state->resourceProvider())) {
         return;
     }
 

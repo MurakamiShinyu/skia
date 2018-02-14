@@ -102,6 +102,12 @@ public:
         this->setTexture(texture);
     }
 
+    GrGLboolean isTexture(GrGLuint textureID) override {
+        GrTextureObj *texture = FIND(textureID, GrTextureObj, kTexture_ObjTypes);
+
+        return texture ? GR_GL_TRUE : GR_GL_FALSE;
+    }
+
     ////////////////////////////////////////////////////////////////////////////////
     GrGLvoid bufferData(GrGLenum target, GrGLsizeiptr size, const GrGLvoid* data,
                         GrGLenum usage) override {
@@ -982,7 +988,8 @@ private:
             case GR_GL_COMPILE_STATUS:
                 *params = GR_GL_TRUE;
                 break;
-            case GR_GL_INFO_LOG_LENGTH:
+            case GR_GL_INFO_LOG_LENGTH: // fallthru
+            case GL_PROGRAM_BINARY_LENGTH:
                 *params = 0;
                 break;
                 // we don't expect any other pnames
@@ -1194,14 +1201,13 @@ const char* DebugInterface::kExtensions[] = {
 
 class DebugGLContext : public sk_gpu_test::GLTestContext {
 public:
-   DebugGLContext() {
-       this->init(new DebugInterface());
-   }
+    DebugGLContext() { this->init(sk_make_sp<DebugInterface>()); }
 
-   ~DebugGLContext() override { this->teardown(); }
+    ~DebugGLContext() override { this->teardown(); }
 
 private:
     void onPlatformMakeCurrent() const override {}
+    std::function<void()> onPlatformGetAutoContextRestore() const override { return nullptr; }
     void onPlatformSwapBuffers() const override {}
     GrGLFuncPtr onPlatformGetProcAddress(const char*) const override { return nullptr; }
 };

@@ -11,7 +11,7 @@
 #include "glsl/GrGLSLColorSpaceXformHelper.h"
 #include "glsl/GrGLSLFragmentShaderBuilder.h"
 #include "glsl/GrGLSLGeometryProcessor.h"
-#include "glsl/GrGLSLVertexShaderBuilder.h"
+#include "glsl/GrGLSLVertexGeoBuilder.h"
 #include "glsl/GrGLSLVarying.h"
 #include "glsl/GrGLSLUniformHandler.h"
 #include "glsl/GrGLSLUtil.h"
@@ -82,7 +82,7 @@ public:
 
             // Setup pass through color
             if (gp.hasVertexColor()) {
-                GrGLSLVertToFrag varying(kHalf4_GrSLType);
+                GrGLSLVarying varying(kHalf4_GrSLType);
                 varyingHandler->addVarying("color", &varying);
 
                 // There are several optional steps to process the color. Start with the attribute:
@@ -144,8 +144,7 @@ public:
                 this->emitTransforms(vertBuilder,
                                      varyingHandler,
                                      uniformHandler,
-                                     gpArgs->fPositionVar,
-                                     gp.inLocalCoords()->fName,
+                                     gp.inLocalCoords()->asShaderVar(),
                                      gp.localMatrix(),
                                      args.fFPCoordTransformHandler);
             } else {
@@ -153,8 +152,7 @@ public:
                 this->emitTransforms(vertBuilder,
                                      varyingHandler,
                                      uniformHandler,
-                                     gpArgs->fPositionVar,
-                                     gp.inPosition()->fName,
+                                     gp.inPosition()->asShaderVar(),
                                      gp.localMatrix(),
                                      args.fFPCoordTransformHandler);
             }
@@ -248,14 +246,14 @@ private:
                    const SkMatrix& localMatrix,
                    uint8_t coverage,
                    bool localCoordsWillBeRead)
-            : fColor(color)
+            : INHERITED(kDefaultGeoProc_ClassID)
+            , fColor(color)
             , fViewMatrix(viewMatrix)
             , fLocalMatrix(localMatrix)
             , fCoverage(coverage)
             , fFlags(gpTypeFlags)
             , fLocalCoordsWillBeRead(localCoordsWillBeRead)
             , fColorSpaceXform(std::move(colorSpaceXform)) {
-        this->initClassID<DefaultGeoProc>();
         fInPosition = &this->addVertexAttrib("inPosition", kFloat2_GrVertexAttribType);
         if (fFlags & kColorAttribute_GPFlag) {
             fInColor = &this->addVertexAttrib("inColor", kUByte4_norm_GrVertexAttribType);

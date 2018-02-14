@@ -144,8 +144,8 @@ bool SkGifCodec::onGetFrameInfo(int i, SkCodec::FrameInfo* frameInfo) const {
         frameInfo->fDuration = frameContext->getDuration();
         frameInfo->fRequiredFrame = frameContext->getRequiredFrame();
         frameInfo->fFullyReceived = frameContext->isComplete();
-        frameInfo->fAlpha = frameContext->hasAlpha() ? SkEncodedInfo::kBinary_Alpha
-                                                     : SkEncodedInfo::kOpaque_Alpha;
+        frameInfo->fAlphaType = frameContext->hasAlpha() ? kUnpremul_SkAlphaType
+                                                         : kOpaque_SkAlphaType;
         frameInfo->fDisposalMethod = frameContext->getDisposalMethod();
     }
     return true;
@@ -541,7 +541,7 @@ void SkGifCodec::haveDecodedRow(int frameIndex, const unsigned char* rowBegin,
 
     // Tell the frame to copy the row data if need be.
     if (repeatCount > 1) {
-        const size_t bytesPerPixel = SkColorTypeBytesPerPixel(this->dstInfo().colorType());
+        const size_t bytesPerPixel = this->dstInfo().bytesPerPixel();
         const size_t bytesToCopy = fSwizzler->swizzleWidth() * bytesPerPixel;
         void* copiedLine = SkTAddOffset<void>(dstLine, fSwizzler->swizzleOffsetBytes());
         void* dst = copiedLine;

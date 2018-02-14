@@ -14,6 +14,7 @@
 #include "SkMath.h"
 #include "SkOpts.h"
 #include "SkPngCodec.h"
+#include "SkPngPriv.h"
 #include "SkPoint3.h"
 #include "SkSize.h"
 #include "SkStream.h"
@@ -343,8 +344,7 @@ static float png_inverted_fixed_point_to_float(png_fixed_point x) {
 // Returns a colorSpace object that represents any color space information in
 // the encoded data.  If the encoded data contains an invalid/unsupported color space,
 // this will return NULL. If there is no color space information, it will guess sRGB
-sk_sp<SkColorSpace> read_color_space(png_structp png_ptr, png_infop info_ptr,
-                                     SkColorSpace_Base::ICCTypeFlag iccType) {
+sk_sp<SkColorSpace> read_color_space(png_structp png_ptr, png_infop info_ptr) {
 
 #if (PNG_LIBPNG_VER_MAJOR > 1) || (PNG_LIBPNG_VER_MAJOR == 1 && PNG_LIBPNG_VER_MINOR >= 6)
 
@@ -361,7 +361,7 @@ sk_sp<SkColorSpace> read_color_space(png_structp png_ptr, png_infop info_ptr,
     int compression;
     if (PNG_INFO_iCCP == png_get_iCCP(png_ptr, info_ptr, &name, &compression, &profile,
             &length)) {
-        return SkColorSpace_Base::MakeICC(profile, length, iccType);
+        return SkColorSpace::MakeICC(profile, length);
     }
 
     // Second, check for sRGB.
@@ -911,11 +911,23 @@ void AutoCleanPng::infoCallback(size_t idatLength) {
 
     if (fOutCodec) {
         SkASSERT(nullptr == *fOutCodec);
-        SkColorSpace_Base::ICCTypeFlag iccType = SkColorSpace_Base::kRGB_ICCTypeFlag;
-        if (SkEncodedInfo::kGray_Color == color || SkEncodedInfo::kGrayAlpha_Color == color) {
-            iccType |= SkColorSpace_Base::kGray_ICCTypeFlag;
+        sk_sp<SkColorSpace> colorSpace = read_color_space(fPng_ptr, fInfo_ptr);
+        if (colorSpace) {
+            switch (colorSpace->type()) {
+                case SkColorSpace::kCMYK_Type:
+                    colorSpace = nullptr;
+                    break;
+                case SkColorSpace::kGray_Type:
+                    if (SkEncodedInfo::kGray_Color != color &&
+                        SkEncodedInfo::kGrayAlpha_Color != color)
+                    {
+                        colorSpace = nullptr;
+                    }
+                    break;
+                case SkColorSpace::kRGB_Type:
+                    break;
+            }
         }
-        sk_sp<SkColorSpace> colorSpace = read_color_space(fPng_ptr, fInfo_ptr, iccType);
         if (!colorSpace) {
             // Treat unsupported/invalid color spaces as sRGB.
             colorSpace = SkColorSpace::MakeSRGB();
@@ -924,7 +936,14 @@ void AutoCleanPng::infoCallback(size_t idatLength) {
         SkEncodedInfo encodedInfo = SkEncodedInfo::Make(color, alpha, bitDepth);
         SkImageInfo imageInfo = encodedInfo.makeImageInfo(origWidth, origHeight, colorSpace);
 
-        if (SkEncodedInfo::kOpaque_Alpha == alpha) {
+        if (encodedColorType == PNG_COLOR_TYPE_GRAY_ALPHA) {
+            png_color_8p sigBits;
+            if (png_get_sBIT(fPng_ptr, fInfo_ptr, &sigBits)) {
+                if (8 == sigBits->alpha && kGraySigBit_GrayAlphaIsJustAlpha == sigBits->gray) {
+                    imageInfo = imageInfo.makeColorType(kAlpha_8_SkColorType);
+                }
+            }
+        } else if (SkEncodedInfo::kOpaque_Alpha == alpha) {
             png_color_8p sigBits;
             if (png_get_sBIT(fPng_ptr, fInfo_ptr, &sigBits)) {
                 if (5 == sigBits->red && 6 == sigBits->green && 5 == sigBits->blue) {

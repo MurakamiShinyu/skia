@@ -158,9 +158,9 @@ void SkColorMatrixFilterRowMajor255::onAppendStages(SkRasterPipeline* p,
 
     if (!shaderIsOpaque) { p->append(SkRasterPipeline::unpremul); }
     if (           true) { p->append(SkRasterPipeline::matrix_4x5, fTranspose); }
-    if (!willStayOpaque) { p->append(SkRasterPipeline::premul); }
     if (    needsClamp0) { p->append(SkRasterPipeline::clamp_0); }
-    if (    needsClamp1) { p->append(SkRasterPipeline::clamp_a); }
+    if (    needsClamp1) { p->append(SkRasterPipeline::clamp_1); }
+    if (!willStayOpaque) { p->append(SkRasterPipeline::premul); }
 }
 
 sk_sp<SkColorFilter>
@@ -255,9 +255,9 @@ private:
 
     // We could implement the constant input->constant output optimization but haven't. Other
     // optimizations would be matrix-dependent.
-    ColorMatrixEffect(const SkScalar matrix[20]) : INHERITED(kNone_OptimizationFlags) {
+    ColorMatrixEffect(const SkScalar matrix[20])
+    : INHERITED(kColorMatrixEffect_ClassID, kNone_OptimizationFlags) {
         memcpy(fMatrix, matrix, sizeof(SkScalar) * 20);
-        this->initClassID<ColorMatrixEffect>();
     }
 
     GrGLSLFragmentProcessor* onCreateGLSLInstance() const override {
@@ -293,7 +293,7 @@ std::unique_ptr<GrFragmentProcessor> ColorMatrixEffect::TestCreate(GrProcessorTe
 #endif
 
 std::unique_ptr<GrFragmentProcessor> SkColorMatrixFilterRowMajor255::asFragmentProcessor(
-        GrContext*, SkColorSpace*) const {
+        GrContext*, const GrColorSpaceInfo&) const {
     return ColorMatrixEffect::Make(fMatrix);
 }
 

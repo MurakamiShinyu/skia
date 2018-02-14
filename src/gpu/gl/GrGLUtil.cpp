@@ -7,6 +7,7 @@
 
 
 #include "GrGLUtil.h"
+#include "GrTypesPriv.h"
 #include "SkMatrix.h"
 #include <stdio.h>
 
@@ -133,6 +134,10 @@ void GrGLGetDriverInfo(GrGLStandard standard,
         }
         int n = sscanf(versionString, "%d.%d Mesa %d.%d",
                        &major, &minor, &driverMajor, &driverMinor);
+        if (4 != n) {
+            n = sscanf(versionString, "%d.%d (Core Profile) Mesa %d.%d",
+                       &major, &minor, &driverMajor, &driverMinor);
+        }
         if (4 == n) {
             *outDriver = kMesa_GrGLDriver;
             *outVersion = GR_GL_DRIVER_VER(driverMajor, driverMinor);
@@ -329,18 +334,47 @@ GrGLRenderer GrGLGetRendererFromString(const char* rendererString) {
                 }
             }
         }
+        if (0 == strcmp("Intel Iris Pro OpenGL Engine", rendererString)) {
+            return kIntelIrisPro_GrGLRenderer;
+        }
+
         int intelNumber;
         n = sscanf(rendererString, "Intel(R) Iris(TM) Graphics %d", &intelNumber);
         if (1 != n) {
             n = sscanf(rendererString, "Intel(R) HD Graphics %d", &intelNumber);
         }
         if (1 == n) {
+            if (intelNumber >= 4000 && intelNumber < 5000) {
+                return kIntel4xxx_GrGLRenderer;
+            }
             if (intelNumber >= 6000 && intelNumber < 7000) {
                 return kIntel6xxx_GrGLRenderer;
             }
         }
+
+        // The AMD string can have a somewhat arbitrary preamble (see skbug.com/7195)
+        if (const char* amdString = strstr(rendererString, "Radeon")) {
+            char amdGeneration, amdTier, amdRevision;
+            n = sscanf(amdString, "Radeon (TM) R9 M%c%c%c",
+                                       &amdGeneration, &amdTier, &amdRevision);
+            if (3 == n) {
+                if ('4' == amdGeneration) {
+                    return kAMDRadeonR9M4xx_GrGLRenderer;
+                }
+            }
+
+            char amd0, amd1, amd2;
+            n = sscanf(amdString, "Radeon HD 7%c%c%c Series", &amd0, &amd1, &amd2);
+            if (3 == n) {
+                return kAMDRadeonHD7xxx_GrGLRenderer;
+            }
+        }
+
         if (0 == strcmp("Mesa Offscreen", rendererString)) {
             return kOSMesa_GrGLRenderer;
+        }
+        if (strstr(rendererString, "llvmpipe")) {
+            return kGalliumLLVM_GrGLRenderer;
         }
         static const char kMaliTStr[] = "Mali-T";
         if (0 == strncmp(rendererString, kMaliTStr, SK_ARRAY_COUNT(kMaliTStr) - 1)) {
@@ -363,9 +397,37 @@ void GrGLGetANGLEInfoFromString(const char* rendererString, GrGLANGLEBackend* ba
     }
     if (strstr(rendererString, "Intel")) {
         *vendor = GrGLANGLEVendor::kIntel;
-    }
-    if (strstr(rendererString, "HD Graphics 4000") || strstr(rendererString, "HD Graphics 2500")) {
-        *renderer = GrGLANGLERenderer::kIvyBridge;
+
+        const char* modelStr;
+        int modelNumber;
+        if ((modelStr = strstr(rendererString, "HD Graphics")) &&
+            (1 == sscanf(modelStr, "HD Graphics %i", &modelNumber) ||
+             1 == sscanf(modelStr, "HD Graphics P%i", &modelNumber))) {
+            switch (modelNumber) {
+                case 4000:
+                case 2500:
+                    *renderer = GrGLANGLERenderer::kIvyBridge;
+                    break;
+                case 510:
+                case 515:
+                case 520:
+                case 530:
+                    *renderer = GrGLANGLERenderer::kSkylake;
+                    break;
+            }
+        } else if ((modelStr = strstr(rendererString, "Iris")) &&
+                   (1 == sscanf(modelStr, "Iris(TM) Graphics %i", &modelNumber) ||
+                    1 == sscanf(modelStr, "Iris(TM) Pro Graphics %i", &modelNumber) ||
+                    1 == sscanf(modelStr, "Iris(TM) Pro Graphics P%i", &modelNumber))) {
+            switch (modelNumber) {
+                case 540:
+                case 550:
+                case 555:
+                case 580:
+                    *renderer = GrGLANGLERenderer::kSkylake;
+                    break;
+            }
+        }
     }
     if (strstr(rendererString, "Direct3D11")) {
         *backend = GrGLANGLEBackend::kD3D11;
@@ -423,3 +485,37 @@ GrGLenum GrToGLStencilFunc(GrStencilTest test) {
 
     return gTable[(int)test];
 }
+
+GrPixelConfig GrGLSizedFormatToPixelConfig(GrGLenum sizedFormat) {
+    switch (sizedFormat) {
+        case GR_GL_R8:
+            return kAlpha_8_as_Red_GrPixelConfig;
+        case GR_GL_ALPHA8:
+            return kAlpha_8_as_Alpha_GrPixelConfig;
+        case GR_GL_RGBA8:
+            return kRGBA_8888_GrPixelConfig;
+        case GR_GL_BGRA8:
+            return kBGRA_8888_GrPixelConfig;
+        case GR_GL_SRGB8_ALPHA8:
+            return kSRGBA_8888_GrPixelConfig;
+        case GR_GL_RGB565:
+            return kRGB_565_GrPixelConfig;
+        case GR_GL_RGB5:
+            return kRGB_565_GrPixelConfig;
+        case GR_GL_RGBA4:
+            return kRGBA_4444_GrPixelConfig;
+        case GR_GL_LUMINANCE8:
+            return kGray_8_GrPixelConfig;
+        case GR_GL_RGBA32F:
+            return kRGBA_float_GrPixelConfig;
+        case GR_GL_RG32F:
+            return kRG_float_GrPixelConfig;
+        case GR_GL_R16F:
+            return kAlpha_half_as_Red_GrPixelConfig;
+        case GR_GL_RGBA16F:
+            return kRGBA_half_GrPixelConfig;
+        default:
+            return kUnknown_GrPixelConfig;
+    }
+}
+

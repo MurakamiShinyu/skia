@@ -9,6 +9,7 @@
 #include "SkBitmap.h"
 #include "SkColorData.h"
 #include "SkColorSpaceXformer.h"
+#include "SkImageFilterPriv.h"
 #include "SkPoint3.h"
 #include "SkReadBuffer.h"
 #include "SkSpecialImage.h"
@@ -76,7 +77,7 @@ static inline void fast_normalize(SkPoint3* vector) {
     vector->fZ *= scale;
 }
 
-static SkPoint3 readPoint3(SkReadBuffer& buffer) {
+static SkPoint3 read_point3(SkReadBuffer& buffer) {
     SkPoint3 point;
     point.fX = buffer.readScalar();
     point.fY = buffer.readScalar();
@@ -87,7 +88,7 @@ static SkPoint3 readPoint3(SkReadBuffer& buffer) {
     return point;
 };
 
-static void writePoint3(const SkPoint3& point, SkWriteBuffer& buffer) {
+static void write_point3(const SkPoint3& point, SkWriteBuffer& buffer) {
     buffer.writeScalar(point.fX);
     buffer.writeScalar(point.fY);
     buffer.writeScalar(point.fZ);
@@ -100,6 +101,8 @@ public:
         kDistant_LightType,
         kPoint_LightType,
         kSpot_LightType,
+
+        kLast_LightType = kSpot_LightType
     };
     virtual LightType type() const = 0;
     const SkPoint3& color() const { return fColor; }
@@ -124,10 +127,10 @@ protected:
                                 SkIntToScalar(SkColorGetG(color)),
                                 SkIntToScalar(SkColorGetB(color)));
     }
-    SkImageFilterLight(const SkPoint3& color)
-    : fColor(color) {}
+    SkImageFilterLight(const SkPoint3& color) : fColor(color) {}
+
     SkImageFilterLight(SkReadBuffer& buffer) {
-        fColor = readPoint3(buffer);
+        fColor = read_point3(buffer);
     }
 
     virtual void onFlattenLight(SkWriteBuffer& buffer) const = 0;
@@ -442,7 +445,7 @@ void SkLightingImageFilterInternal::drawRect(GrRenderTargetContext* renderTarget
                                              const SkIRect& bounds) const {
     SkRect srcRect = dstRect.makeOffset(SkIntToScalar(bounds.x()), SkIntToScalar(bounds.y()));
     GrPaint paint;
-    paint.setGammaCorrect(renderTargetContext->isGammaCorrect());
+    paint.setGammaCorrect(renderTargetContext->colorSpaceInfo().isGammaCorrect());
     auto fp = this->makeFragmentProcessor(std::move(srcProxy), matrix, srcBounds, boundaryMode);
     paint.addColorFragmentProcessor(std::move(fp));
     paint.setPorterDuffXPFactory(SkBlendMode::kSrc);
@@ -509,11 +512,11 @@ sk_sp<SkSpecialImage> SkLightingImageFilterInternal::filterImageGPU(
                    kBottomRight_BoundaryMode, pSrcBounds, offsetBounds);
 
     return SkSpecialImage::MakeDeferredFromGpu(
-                                       context,
-                                       SkIRect::MakeWH(offsetBounds.width(), offsetBounds.height()),
-                                       kNeedNewImageUniqueID_SpecialImage,
-                                       renderTargetContext->asTextureProxyRef(),
-                                       renderTargetContext->refColorSpace());
+            context,
+            SkIRect::MakeWH(offsetBounds.width(), offsetBounds.height()),
+            kNeedNewImageUniqueID_SpecialImage,
+            renderTargetContext->asTextureProxyRef(),
+            renderTargetContext->colorSpaceInfo().refColorSpace());
 }
 #endif
 
@@ -602,7 +605,7 @@ public:
     const GrTextureDomain& domain() const { return fDomain; }
 
 protected:
-    GrLightingEffect(sk_sp<GrTextureProxy>, sk_sp<const SkImageFilterLight> light,
+    GrLightingEffect(ClassID classID, sk_sp<GrTextureProxy>, sk_sp<const SkImageFilterLight> light,
                      SkScalar surfaceScale, const SkMatrix& matrix, BoundaryMode boundaryMode,
                      const SkIRect* srcBounds);
 
@@ -862,7 +865,7 @@ public:
     }
 
     SkDistantLight(SkReadBuffer& buffer) : INHERITED(buffer) {
-        fDirection = readPoint3(buffer);
+        fDirection = read_point3(buffer);
     }
 
 protected:
@@ -873,7 +876,7 @@ protected:
         return new SkDistantLight(direction(), color());
     }
     void onFlattenLight(SkWriteBuffer& buffer) const override {
-        writePoint3(fDirection, buffer);
+        write_point3(fDirection, buffer);
     }
 
 private:
@@ -933,14 +936,14 @@ public:
     }
 
     SkPointLight(SkReadBuffer& buffer) : INHERITED(buffer) {
-        fLocation = readPoint3(buffer);
+        fLocation = read_point3(buffer);
     }
 
 protected:
     SkPointLight(const SkPoint3& location, const SkPoint3& color)
      : INHERITED(color), fLocation(location) {}
     void onFlattenLight(SkWriteBuffer& buffer) const override {
-        writePoint3(fLocation, buffer);
+        write_point3(fLocation, buffer);
     }
 
 private:
@@ -1039,13 +1042,13 @@ public:
     const SkPoint3& s() const { return fS; }
 
     SkSpotLight(SkReadBuffer& buffer) : INHERITED(buffer) {
-        fLocation = readPoint3(buffer);
-        fTarget = readPoint3(buffer);
+        fLocation = read_point3(buffer);
+        fTarget = read_point3(buffer);
         fSpecularExponent = buffer.readScalar();
         fCosOuterConeAngle = buffer.readScalar();
         fCosInnerConeAngle = buffer.readScalar();
         fConeScale = buffer.readScalar();
-        fS = readPoint3(buffer);
+        fS = read_point3(buffer);
         buffer.validate(SkScalarIsFinite(fSpecularExponent) &&
                         SkScalarIsFinite(fCosOuterConeAngle) &&
                         SkScalarIsFinite(fCosInnerConeAngle) &&
@@ -1071,13 +1074,13 @@ protected:
     {
     }
     void onFlattenLight(SkWriteBuffer& buffer) const override {
-        writePoint3(fLocation, buffer);
-        writePoint3(fTarget, buffer);
+        write_point3(fLocation, buffer);
+        write_point3(fTarget, buffer);
         buffer.writeScalar(fSpecularExponent);
         buffer.writeScalar(fCosOuterConeAngle);
         buffer.writeScalar(fCosInnerConeAngle);
         buffer.writeScalar(fConeScale);
-        writePoint3(fS, buffer);
+        write_point3(fS, buffer);
     }
 
     bool isEqual(const SkImageFilterLight& other) const override {
@@ -1119,13 +1122,13 @@ const SkScalar SkSpotLight::kSpecularExponentMax = 128.0f;
 void SkImageFilterLight::flattenLight(SkWriteBuffer& buffer) const {
     // Write type first, then baseclass, then subclass.
     buffer.writeInt(this->type());
-    writePoint3(fColor, buffer);
+    write_point3(fColor, buffer);
     this->onFlattenLight(buffer);
 }
 
 /*static*/ SkImageFilterLight* SkImageFilterLight::UnflattenLight(SkReadBuffer& buffer) {
-    // Read type first.
-    const SkImageFilterLight::LightType type = (SkImageFilterLight::LightType)buffer.readInt();
+    SkImageFilterLight::LightType type = buffer.read32LE(SkImageFilterLight::kLast_LightType);
+
     switch (type) {
         // Each of these constructors must first call SkLight's, so we'll read the baseclass
         // then subclass, same order as flattenLight.
@@ -1136,8 +1139,8 @@ void SkImageFilterLight::flattenLight(SkWriteBuffer& buffer) const {
         case SkImageFilterLight::kSpot_LightType:
             return new SkSpotLight(buffer);
         default:
+            // Should never get here due to prior check of SkSafeRange
             SkDEBUGFAIL("Unknown LightType.");
-            buffer.validate(false);
             return nullptr;
     }
 }
@@ -1271,9 +1274,11 @@ SkDiffuseLightingImageFilter::SkDiffuseLightingImageFilter(sk_sp<SkImageFilterLi
 
 sk_sp<SkFlattenable> SkDiffuseLightingImageFilter::CreateProc(SkReadBuffer& buffer) {
     SK_IMAGEFILTER_UNFLATTEN_COMMON(common, 1);
+
     sk_sp<SkImageFilterLight> light(SkImageFilterLight::UnflattenLight(buffer));
     SkScalar surfaceScale = buffer.readScalar();
     SkScalar kd = buffer.readScalar();
+
     return Make(std::move(light), surfaceScale, kd, common.getInput(0), &common.cropRect());
 }
 
@@ -1426,6 +1431,7 @@ sk_sp<SkFlattenable> SkSpecularLightingImageFilter::CreateProc(SkReadBuffer& buf
     SkScalar surfaceScale = buffer.readScalar();
     SkScalar ks = buffer.readScalar();
     SkScalar shine = buffer.readScalar();
+
     return Make(std::move(light), surfaceScale, ks, shine, common.getInput(0),
                 &common.cropRect());
 }
@@ -1691,14 +1697,15 @@ static GrTextureDomain create_domain(GrTextureProxy* proxy, const SkIRect* srcBo
     }
 }
 
-GrLightingEffect::GrLightingEffect(sk_sp<GrTextureProxy> proxy,
+GrLightingEffect::GrLightingEffect(ClassID classID,
+                                   sk_sp<GrTextureProxy> proxy,
                                    sk_sp<const SkImageFilterLight> light,
                                    SkScalar surfaceScale,
                                    const SkMatrix& matrix,
                                    BoundaryMode boundaryMode,
                                    const SkIRect* srcBounds)
         // Perhaps this could advertise the opaque or coverage-as-alpha optimizations?
-        : INHERITED(kNone_OptimizationFlags)
+        : INHERITED(classID, kNone_OptimizationFlags)
         , fCoordTransform(proxy.get())
         , fDomain(create_domain(proxy.get(), srcBounds, GrTextureDomain::kDecal_Mode))
         , fTextureSampler(std::move(proxy))
@@ -1706,13 +1713,12 @@ GrLightingEffect::GrLightingEffect(sk_sp<GrTextureProxy> proxy,
         , fSurfaceScale(surfaceScale)
         , fFilterMatrix(matrix)
         , fBoundaryMode(boundaryMode) {
-    this->initClassID<GrLightingEffect>();
     this->addCoordTransform(&fCoordTransform);
     this->addTextureSampler(&fTextureSampler);
 }
 
 GrLightingEffect::GrLightingEffect(const GrLightingEffect& that)
-        : INHERITED(that.optimizationFlags())
+        : INHERITED(that.classID(), that.optimizationFlags())
         , fCoordTransform(that.fCoordTransform)
         , fDomain(that.fDomain)
         , fTextureSampler(that.fTextureSampler)
@@ -1720,7 +1726,6 @@ GrLightingEffect::GrLightingEffect(const GrLightingEffect& that)
         , fSurfaceScale(that.fSurfaceScale)
         , fFilterMatrix(that.fFilterMatrix)
         , fBoundaryMode(that.fBoundaryMode) {
-    this->initClassID<GrLightingEffect>();
     this->addCoordTransform(&fCoordTransform);
     this->addTextureSampler(&fTextureSampler);
 }
@@ -1741,16 +1746,12 @@ GrDiffuseLightingEffect::GrDiffuseLightingEffect(sk_sp<GrTextureProxy> proxy,
                                                  SkScalar kd,
                                                  BoundaryMode boundaryMode,
                                                  const SkIRect* srcBounds)
-        : INHERITED(std::move(proxy), std::move(light), surfaceScale, matrix, boundaryMode,
-                    srcBounds)
-        , fKD(kd) {
-    this->initClassID<GrDiffuseLightingEffect>();
-}
+        : INHERITED(kGrDiffuseLightingEffect_ClassID, std::move(proxy), std::move(light),
+                    surfaceScale, matrix, boundaryMode, srcBounds)
+        , fKD(kd) {}
 
 GrDiffuseLightingEffect::GrDiffuseLightingEffect(const GrDiffuseLightingEffect& that)
-        : INHERITED(that), fKD(that.fKD) {
-    this->initClassID<GrDiffuseLightingEffect>();
-}
+        : INHERITED(that), fKD(that.fKD) {}
 
 bool GrDiffuseLightingEffect::onIsEqual(const GrFragmentProcessor& sBase) const {
     const GrDiffuseLightingEffect& s = sBase.cast<GrDiffuseLightingEffect>();
@@ -1986,17 +1987,13 @@ GrSpecularLightingEffect::GrSpecularLightingEffect(sk_sp<GrTextureProxy> proxy,
                                                    SkScalar shininess,
                                                    BoundaryMode boundaryMode,
                                                    const SkIRect* srcBounds)
-        : INHERITED(std::move(proxy), std::move(light), surfaceScale, matrix, boundaryMode,
-                    srcBounds)
+        : INHERITED(kGrSpecularLightingEffect_ClassID, std::move(proxy), std::move(light),
+                    surfaceScale, matrix, boundaryMode, srcBounds)
         , fKS(ks)
-        , fShininess(shininess) {
-    this->initClassID<GrSpecularLightingEffect>();
-}
+        , fShininess(shininess) {}
 
 GrSpecularLightingEffect::GrSpecularLightingEffect(const GrSpecularLightingEffect& that)
-        : INHERITED(that), fKS(that.fKS), fShininess(that.fShininess) {
-    this->initClassID<GrSpecularLightingEffect>();
-}
+        : INHERITED(that), fKS(that.fKS), fShininess(that.fShininess) {}
 
 bool GrSpecularLightingEffect::onIsEqual(const GrFragmentProcessor& sBase) const {
     const GrSpecularLightingEffect& s = sBase.cast<GrSpecularLightingEffect>();

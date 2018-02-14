@@ -20,7 +20,7 @@ VkImageAspectFlags vk_format_to_aspect_flags(VkFormat format) {
         case VK_FORMAT_D32_SFLOAT_S8_UINT:
             return VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
         default:
-            SkASSERT(kUnknown_GrPixelConfig != GrVkFormatToPixelConfig(format));
+            SkASSERT(GrVkFormatIsSupported(format));
             return VK_IMAGE_ASPECT_COLOR_BIT;
     }
 }
@@ -152,13 +152,13 @@ void GrVkImage::abandonImage() {
     }
 }
 
-void GrVkImage::setResourceRelease(ReleaseProc proc, ReleaseCtx ctx) {
+void GrVkImage::setResourceRelease(sk_sp<GrReleaseProcHelper> releaseHelper) {
     // Forward the release proc on to GrVkImage::Resource
-    fResource->setRelease(proc, ctx);
+    fResource->setRelease(std::move(releaseHelper));
 }
 
 void GrVkImage::Resource::freeGPUData(const GrVkGpu* gpu) const {
-    SkASSERT(!fReleaseProc);
+    SkASSERT(!fReleaseHelper);
     VK_CALL(gpu, DestroyImage(gpu->device(), fImage, nullptr));
     bool isLinear = (VK_IMAGE_TILING_LINEAR == fImageTiling);
     GrVkMemory::FreeImageMemory(gpu, isLinear, fAlloc);

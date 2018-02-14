@@ -330,9 +330,13 @@ namespace {
         void draw(SkCanvas* c, const SkMatrix&) const {
             auto xdivs = pod<int>(this, 0),
                  ydivs = pod<int>(this, xs*sizeof(int));
+            auto colors = (0 == fs) ? nullptr :
+                          pod<SkColor>(this, (xs+ys)*sizeof(int));
             auto flags = (0 == fs) ? nullptr :
-                                     pod<SkCanvas::Lattice::Flags>(this, (xs+ys)*sizeof(int));
-            c->drawImageLattice(image.get(), {xdivs, ydivs, flags, xs, ys, &src}, dst, &paint);
+                         pod<SkCanvas::Lattice::RectType>(this, (xs+ys)*sizeof(int)+
+                                                          fs*sizeof(SkColor));
+            c->drawImageLattice(image.get(), {xdivs, ydivs, flags, xs, ys, &src, colors}, dst,
+                                &paint);
         }
     };
 
@@ -391,16 +395,21 @@ namespace {
     };
     struct DrawTextRSXform final : Op {
         static const auto kType = Type::DrawTextRSXform;
-        DrawTextRSXform(size_t bytes, const SkRect* cull, const SkPaint& paint)
-            : bytes(bytes), paint(paint) {
+        DrawTextRSXform(size_t bytes, int xforms, const SkRect* cull, const SkPaint& paint)
+            : bytes(bytes), xforms(xforms), paint(paint) {
             if (cull) { this->cull = *cull; }
         }
         size_t  bytes;
+        int     xforms;
         SkRect  cull = kUnset;
         SkPaint paint;
         void draw(SkCanvas* c, const SkMatrix&) const {
-            c->drawTextRSXform(pod<void>(this), bytes, pod<SkRSXform>(this, bytes),
-                               maybe_unset(cull), paint);
+            // For alignment, the SkRSXforms are first in the pod section, followed by the text.
+            c->drawTextRSXform(pod<void>(this,xforms*sizeof(SkRSXform)),
+                               bytes,
+                               pod<SkRSXform>(this),
+                               maybe_unset(cull),
+                               paint);
         }
     };
     struct DrawTextBlob final : Op {
@@ -614,14 +623,16 @@ void SkLiteDL::drawImageRect(sk_sp<const SkImage> image, const SkRect* src, cons
 void SkLiteDL::drawImageLattice(sk_sp<const SkImage> image, const SkCanvas::Lattice& lattice,
                                 const SkRect& dst, const SkPaint* paint) {
     int xs = lattice.fXCount, ys = lattice.fYCount;
-    int fs = lattice.fFlags ? (xs + 1) * (ys + 1) : 0;
-    size_t bytes = (xs + ys) * sizeof(int) + fs * sizeof(SkCanvas::Lattice::Flags);
+    int fs = lattice.fRectTypes ? (xs + 1) * (ys + 1) : 0;
+    size_t bytes = (xs + ys) * sizeof(int) + fs * sizeof(SkCanvas::Lattice::RectType)
+                   + fs * sizeof(SkColor);
     SkASSERT(lattice.fBounds);
     void* pod = this->push<DrawImageLattice>(bytes, std::move(image), xs, ys, fs, *lattice.fBounds,
                                              dst, paint);
     copy_v(pod, lattice.fXDivs, xs,
                 lattice.fYDivs, ys,
-                lattice.fFlags, fs);
+                lattice.fColors, fs,
+                lattice.fRectTypes, fs);
 }
 
 void SkLiteDL::drawText(const void* text, size_t bytes,
@@ -649,8 +660,8 @@ void SkLiteDL::drawTextOnPath(const void* text, size_t bytes,
 void SkLiteDL::drawTextRSXform(const void* text, size_t bytes,
                                const SkRSXform xforms[], const SkRect* cull, const SkPaint& paint) {
     int n = paint.countText(text, bytes);
-    void* pod = this->push<DrawTextRSXform>(bytes+n*sizeof(SkRSXform), bytes, cull, paint);
-    copy_v(pod, (const char*)text,bytes, xforms,n);
+    void* pod = this->push<DrawTextRSXform>(bytes+n*sizeof(SkRSXform), bytes, n, cull, paint);
+    copy_v(pod, xforms,n, (const char*)text,bytes);
 }
 void SkLiteDL::drawTextBlob(const SkTextBlob* blob, SkScalar x, SkScalar y, const SkPaint& paint) {
     this->push<DrawTextBlob>(0, blob, x,y, paint);

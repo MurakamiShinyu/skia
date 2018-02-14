@@ -46,7 +46,7 @@ public:
     }
 
     SkImageInfo onImageInfo() const override {
-        return fTarget->imageInfo();
+        return fTarget->imageInfo().makeColorSpace(fTargetCS);
     }
 
     void onDrawPaint(const SkPaint& paint) override {
@@ -139,26 +139,39 @@ public:
     void onDrawImage(const SkImage* img,
                      SkScalar l, SkScalar t,
                      const SkPaint* paint) override {
-        fTarget->drawImage(prepareImage(img).get(), l, t, MaybePaint(paint, fXformer.get()));
+        if (!fTarget->quickReject(SkRect::Make(img->bounds()).makeOffset(l,t))) {
+            fTarget->drawImage(prepareImage(img).get(), l, t, MaybePaint(paint, fXformer.get()));
+        }
     }
     void onDrawImageRect(const SkImage* img,
                          const SkRect* src, const SkRect& dst,
                          const SkPaint* paint, SrcRectConstraint constraint) override {
-        fTarget->drawImageRect(prepareImage(img).get(),
-                               src ? *src : SkRect::MakeIWH(img->width(), img->height()), dst,
-                               MaybePaint(paint, fXformer.get()), constraint);
+        if (!fTarget->quickReject(dst)) {
+            fTarget->drawImageRect(prepareImage(img).get(),
+                                   src ? *src : SkRect::MakeIWH(img->width(), img->height()), dst,
+                                   MaybePaint(paint, fXformer.get()), constraint);
+        }
     }
     void onDrawImageNine(const SkImage* img,
                          const SkIRect& center, const SkRect& dst,
                          const SkPaint* paint) override {
-        fTarget->drawImageNine(prepareImage(img).get(), center, dst,
-                               MaybePaint(paint, fXformer.get()));
+        if (!fTarget->quickReject(dst)) {
+            fTarget->drawImageNine(prepareImage(img).get(), center, dst,
+                                   MaybePaint(paint, fXformer.get()));
+        }
     }
     void onDrawImageLattice(const SkImage* img,
                             const Lattice& lattice, const SkRect& dst,
                             const SkPaint* paint) override {
-        fTarget->drawImageLattice(prepareImage(img).get(), lattice, dst,
-                                  MaybePaint(paint, fXformer.get()));
+        if (!fTarget->quickReject(dst)) {
+            SkSTArray<16, SkColor> colorBuffer;
+            int count = lattice.fRectTypes && lattice.fColors ?
+                        (lattice.fXCount + 1) * (lattice.fYCount + 1) : 0;
+            colorBuffer.reset(count);
+            fTarget->drawImageLattice(prepareImage(img).get(),
+                                      fXformer->apply(lattice, colorBuffer.begin(), count),
+                                      dst, MaybePaint(paint, fXformer.get()));
+        }
     }
     void onDrawAtlas(const SkImage* atlas, const SkRSXform* xforms, const SkRect* tex,
                      const SkColor* colors, int count, SkBlendMode mode,
@@ -173,6 +186,7 @@ public:
                            MaybePaint(paint, fXformer.get()));
     }
 
+    // TODO: quick reject bitmap draw calls before transforming too?
     void onDrawBitmap(const SkBitmap& bitmap,
                       SkScalar l, SkScalar t,
                       const SkPaint* paint) override {
@@ -214,13 +228,18 @@ public:
                                               MaybePaint(paint, fXformer.get()));
         }
 
-
-        fTarget->drawImageLattice(fXformer->apply(bitmap).get(), lattice, dst,
+        SkSTArray<16, SkColor> colorBuffer;
+        int count = lattice.fRectTypes && lattice.fColors?
+                    (lattice.fXCount + 1) * (lattice.fYCount + 1) : 0;
+        colorBuffer.reset(count);
+        fTarget->drawImageLattice(fXformer->apply(bitmap).get(),
+                                  fXformer->apply(lattice, colorBuffer.begin(), count), dst,
                                   MaybePaint(paint, fXformer.get()));
     }
     void onDrawShadowRec(const SkPath& path, const SkDrawShadowRec& rec) override {
         SkDrawShadowRec newRec(rec);
-        newRec.fColor = fXformer->apply(rec.fColor);
+        newRec.fAmbientColor = fXformer->apply(rec.fAmbientColor);
+        newRec.fSpotColor = fXformer->apply(rec.fSpotColor);
         fTarget->private_draw_shadow_rec(path, newRec);
     }
     void onDrawPicture(const SkPicture* pic,
@@ -286,8 +305,6 @@ public:
     }
 
     SkISize getBaseLayerSize() const override { return fTarget->getBaseLayerSize(); }
-    SkRect onGetLocalClipBounds() const override { return fTarget->getLocalClipBounds(); }
-    SkIRect onGetDeviceClipBounds() const override { return fTarget->getDeviceClipBounds(); }
     bool isClipEmpty() const override { return fTarget->isClipEmpty(); }
     bool isClipRect() const override { return fTarget->isClipRect(); }
     bool onPeekPixels(SkPixmap* pixmap) override { return fTarget->peekPixels(pixmap); }
@@ -306,6 +323,9 @@ public:
     GrContext* getGrContext() override { return fTarget->getGrContext(); }
     bool onGetProps(SkSurfaceProps* props) const override { return fTarget->getProps(props); }
     void onFlush() override { return fTarget->flush(); }
+    GrRenderTargetContext* internal_private_accessTopLayerRenderTargetContext() override {
+        return fTarget->internal_private_accessTopLayerRenderTargetContext();
+    }
 
 private:
     sk_sp<SkImage> prepareImage(const SkImage* image) {

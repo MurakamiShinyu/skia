@@ -18,8 +18,9 @@
 #include "GrRenderTargetContextPriv.h"
 #include "GrResourceProvider.h"
 #include "GrResourceKey.h"
+#include "SkBitmap.h"
 #include "SkMakeUnique.h"
-#include "glsl/GrGLSLVertexShaderBuilder.h"
+#include "glsl/GrGLSLVertexGeoBuilder.h"
 #include "glsl/GrGLSLFragmentShaderBuilder.h"
 #include "glsl/GrGLSLGeometryProcessor.h"
 #include "glsl/GrGLSLVarying.h"
@@ -281,7 +282,8 @@ private:
 class GrMeshTestProcessor : public GrGeometryProcessor {
 public:
     GrMeshTestProcessor(bool instanced, bool hasVertexBuffer)
-        : fInstanceLocation(nullptr)
+        : INHERITED(kGrMeshTestProcessor_ClassID)
+        , fInstanceLocation(nullptr)
         , fVertex(nullptr)
         , fColor(nullptr) {
         if (instanced) {
@@ -294,7 +296,6 @@ public:
             fVertex = &this->addVertexAttrib("vertex", kHalf2_GrVertexAttribType);
             fColor = &this->addVertexAttrib("color", kUByte4_norm_GrVertexAttribType);
         }
-        this->initClassID<GrMeshTestProcessor>();
     }
 
     const char* name() const override { return "GrMeshTest Processor"; }
@@ -362,9 +363,8 @@ sk_sp<const GrBuffer> DrawMeshHelper::makeVertexBuffer(const T* data, int count)
 
 sk_sp<const GrBuffer> DrawMeshHelper::getIndexBuffer() {
     GR_DEFINE_STATIC_UNIQUE_KEY(gIndexBufferKey);
-    return sk_sp<const GrBuffer>(
-        fState->resourceProvider()->findOrCreatePatternedIndexBuffer(
-            kIndexPattern, 6, kIndexPatternRepeatCount, 4, gIndexBufferKey));
+    return fState->resourceProvider()->findOrCreatePatternedIndexBuffer(
+            kIndexPattern, 6, kIndexPatternRepeatCount, 4, gIndexBufferKey);
 }
 
 void DrawMeshHelper::drawMesh(const GrMesh& mesh) {
@@ -390,7 +390,7 @@ static void run_test(const char* testName, skiatest::Reporter* reporter,
     }
 
     SkAutoSTMalloc<kImageHeight * kImageWidth, uint32_t> resultPx(h * rowBytes);
-    rtc->clear(nullptr, 0xbaaaaaad, true);
+    rtc->clear(nullptr, 0xbaaaaaad, GrRenderTargetContext::CanClearFullscreen::kYes);
     rtc->priv().testingOnly_addDrawOp(skstd::make_unique<GrMeshTestOp>(testFn));
     rtc->readPixels(gold.info(), resultPx, rowBytes, 0, 0, 0);
     for (int y = 0; y < h; ++y) {

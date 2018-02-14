@@ -7,6 +7,8 @@
 
 #include "GrBackendSurface.h"
 
+#include "gl/GrGLUtil.h"
+
 #ifdef SK_VULKAN
 #include "vk/GrVkTypes.h"
 #include "vk/GrVkUtil.h"
@@ -19,6 +21,7 @@ GrBackendTexture::GrBackendTexture(int width,
         : fWidth(width)
         , fHeight(height)
         , fConfig(GrVkFormatToPixelConfig(vkInfo.fFormat))
+        , fMipMapped(GrMipMapped(vkInfo.fLevelCount > 1))
         , fBackend(kVulkan_GrBackend)
         , fVkInfo(vkInfo) {}
 #endif
@@ -27,9 +30,28 @@ GrBackendTexture::GrBackendTexture(int width,
                                    int height,
                                    GrPixelConfig config,
                                    const GrGLTextureInfo& glInfo)
+        : GrBackendTexture(width, height, config, GrMipMapped::kNo, glInfo) {}
+
+GrBackendTexture::GrBackendTexture(int width,
+                                   int height,
+                                   GrPixelConfig config,
+                                   GrMipMapped mipMapped,
+                                   const GrGLTextureInfo& glInfo)
         : fWidth(width)
         , fHeight(height)
         , fConfig(config)
+        , fMipMapped(mipMapped)
+        , fBackend(kOpenGL_GrBackend)
+        , fGLInfo(glInfo) {}
+
+GrBackendTexture::GrBackendTexture(int width,
+                                   int height,
+                                   GrMipMapped mipMapped,
+                                   const GrGLTextureInfo& glInfo)
+        : fWidth(width)
+        , fHeight(height)
+        , fConfig(GrGLSizedFormatToPixelConfig(glInfo.fFormat))
+        , fMipMapped(mipMapped)
         , fBackend(kOpenGL_GrBackend)
         , fGLInfo(glInfo) {}
 
@@ -37,9 +59,17 @@ GrBackendTexture::GrBackendTexture(int width,
                                    int height,
                                    GrPixelConfig config,
                                    const GrMockTextureInfo& mockInfo)
+        : GrBackendTexture(width, height, config, GrMipMapped::kNo, mockInfo) {}
+
+GrBackendTexture::GrBackendTexture(int width,
+                                   int height,
+                                   GrPixelConfig config,
+                                   GrMipMapped mipMapped,
+                                   const GrMockTextureInfo& mockInfo)
         : fWidth(width)
         , fHeight(height)
         , fConfig(config)
+        , fMipMapped(mipMapped)
         , fBackend(kMock_GrBackend)
         , fMockInfo(mockInfo) {}
 
@@ -76,7 +106,7 @@ GrBackendRenderTarget::GrBackendRenderTarget(int width,
                                              const GrVkImageInfo& vkInfo)
         : fWidth(width)
         , fHeight(height)
-        , fSampleCnt(sampleCnt)
+        , fSampleCnt(SkTMax(1, sampleCnt))
         , fStencilBits(stencilBits)
         , fConfig(GrVkFormatToPixelConfig(vkInfo.fFormat))
         , fBackend(kVulkan_GrBackend)
@@ -91,9 +121,22 @@ GrBackendRenderTarget::GrBackendRenderTarget(int width,
                                              const GrGLFramebufferInfo& glInfo)
         : fWidth(width)
         , fHeight(height)
-        , fSampleCnt(sampleCnt)
+        , fSampleCnt(SkTMax(1, sampleCnt))
         , fStencilBits(stencilBits)
         , fConfig(config)
+        , fBackend(kOpenGL_GrBackend)
+        , fGLInfo(glInfo) {}
+
+GrBackendRenderTarget::GrBackendRenderTarget(int width,
+                                             int height,
+                                             int sampleCnt,
+                                             int stencilBits,
+                                             const GrGLFramebufferInfo& glInfo)
+        : fWidth(width)
+        , fHeight(height)
+        , fSampleCnt(SkTMax(1, sampleCnt))
+        , fStencilBits(stencilBits)
+        , fConfig(GrGLSizedFormatToPixelConfig(glInfo.fFormat))
         , fBackend(kOpenGL_GrBackend)
         , fGLInfo(glInfo) {}
 

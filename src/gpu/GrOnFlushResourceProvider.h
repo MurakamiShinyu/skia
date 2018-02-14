@@ -9,6 +9,7 @@
 #define GrOnFlushResourceProvider_DEFINED
 
 #include "GrTypes.h"
+#include "GrDeferredUpload.h"
 #include "GrOpFlushState.h"
 #include "GrResourceProvider.h"
 #include "SkRefCnt.h"
@@ -46,7 +47,8 @@ public:
      * Called once flushing is complete and all ops indicated by preFlush have been executed and
      * released. startTokenForNextFlush can be used to track resources used in the current flush.
      */
-    virtual void postFlush(GrDrawOpUploadToken startTokenForNextFlush) {}
+    virtual void postFlush(GrDeferredUploadToken startTokenForNextFlush,
+                           const uint32_t* opListIDs, int numOpListIDs) {}
 
     /**
      * Tells the callback owner to hold onto this object when freeing GPU resources
@@ -67,22 +69,24 @@ private:
  */
 class GrOnFlushResourceProvider {
 public:
-    sk_sp<GrRenderTargetContext> makeRenderTargetContext(const GrSurfaceDesc& desc,
-                                                         sk_sp<SkColorSpace> colorSpace,
-                                                         const SkSurfaceProps* props);
+    sk_sp<GrRenderTargetContext> makeRenderTargetContext(const GrSurfaceDesc&,
+                                                         sk_sp<SkColorSpace>,
+                                                         const SkSurfaceProps*);
 
     // TODO: we only need this entry point as long as we have to pre-allocate the atlas.
     // Remove it ASAP.
-    sk_sp<GrRenderTargetContext> makeRenderTargetContext(sk_sp<GrSurfaceProxy> proxy,
-                                                         sk_sp<SkColorSpace> colorSpace,
-                                                         const SkSurfaceProps* props);
+    sk_sp<GrRenderTargetContext> makeRenderTargetContext(sk_sp<GrSurfaceProxy>,
+                                                         sk_sp<SkColorSpace>,
+                                                         const SkSurfaceProps*);
+
+    bool instatiateProxy(GrSurfaceProxy*);
 
     // Creates a GPU buffer with a "dynamic" access pattern.
     sk_sp<GrBuffer> makeBuffer(GrBufferType, size_t, const void* data = nullptr);
 
     // Either finds and refs, or creates a static GPU buffer with the given data.
-    sk_sp<GrBuffer> findOrMakeStaticBuffer(const GrUniqueKey&, GrBufferType,
-                                           size_t, const void* data);
+    sk_sp<const GrBuffer> findOrMakeStaticBuffer(GrBufferType, size_t, const void* data,
+                                                 const GrUniqueKey&);
 
     const GrCaps* caps() const;
 

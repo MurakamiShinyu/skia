@@ -40,15 +40,14 @@ sk_sp<GrMtlTexture> GrMtlTexture::CreateNewTexture(GrMtlGpu* gpu, SkBudgeted bud
 
     id<MTLTexture> texture = [gpu->device() newTextureWithDescriptor:descriptor];
 
-    return sk_sp<GrMtlTexture>(new GrMtlTexture(gpu, budgeted, desc, texture, mipLevels > 1));
+    GrMipMapsStatus mipMapsStatus = mipLevels > 1 ? GrMipMapsStatus::kValid
+                                                  : GrMipMapsStatus::kNotAllocated;
+
+    return sk_sp<GrMtlTexture>(new GrMtlTexture(gpu, budgeted, desc, texture, mipMapsStatus));
 }
 
 // This method parallels GrTextureProxy::highestFilterMode
 static inline GrSamplerState::Filter highest_filter_mode(GrPixelConfig config) {
-    if (GrPixelConfigIsSint(config)) {
-        // We only ever want to nearest-neighbor sample signed int textures.
-        return GrSamplerState::Filter::kNearest;
-    }
     return GrSamplerState::Filter::kMipMap;
 }
 
@@ -56,10 +55,10 @@ GrMtlTexture::GrMtlTexture(GrMtlGpu* gpu,
                            SkBudgeted budgeted,
                            const GrSurfaceDesc& desc,
                            id<MTLTexture> texture,
-                           bool isMipMapped)
+                           GrMipMapsStatus mipMapsStatus)
         : GrSurface(gpu, desc)
         , INHERITED(gpu, desc, kTexture2DSampler_GrSLType, highest_filter_mode(desc.fConfig),
-                    isMipMapped)
+                    mipMapsStatus)
         , fTexture(texture) {
 }
 
@@ -75,4 +74,8 @@ GrMtlGpu* GrMtlTexture::getMtlGpu() const {
 GrBackendObject GrMtlTexture::getTextureHandle() const {
     void* voidTex = (__bridge_retained void*)fTexture;
     return (GrBackendObject)voidTex;
+}
+
+GrBackendTexture GrMtlTexture::getBackendTexture() const {
+    return GrBackendTexture(); // invalid
 }

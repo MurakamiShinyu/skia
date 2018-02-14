@@ -10,6 +10,7 @@
 #include "SkBitmap.h"
 #include "SkColorData.h"
 #include "SkColorSpaceXformer.h"
+#include "SkImageFilterPriv.h"
 #include "SkOpts.h"
 #include "SkReadBuffer.h"
 #include "SkRect.h"
@@ -324,14 +325,13 @@ GrMorphologyEffect::GrMorphologyEffect(sk_sp<GrTextureProxy> proxy,
                                        int radius,
                                        Type type,
                                        const float range[2])
-        : INHERITED(ModulateByConfigOptimizationFlags(proxy->config()))
+        : INHERITED(kGrMorphologyEffect_ClassID, ModulateByConfigOptimizationFlags(proxy->config()))
         , fCoordTransform(proxy.get())
         , fTextureSampler(std::move(proxy))
         , fDirection(direction)
         , fRadius(radius)
         , fType(type)
         , fUseRange(SkToBool(range)) {
-    this->initClassID<GrMorphologyEffect>();
     this->addCoordTransform(&fCoordTransform);
     this->addTextureSampler(&fTextureSampler);
     if (fUseRange) {
@@ -341,14 +341,13 @@ GrMorphologyEffect::GrMorphologyEffect(sk_sp<GrTextureProxy> proxy,
 }
 
 GrMorphologyEffect::GrMorphologyEffect(const GrMorphologyEffect& that)
-        : INHERITED(that.optimizationFlags())
+        : INHERITED(kGrMorphologyEffect_ClassID, that.optimizationFlags())
         , fCoordTransform(that.fCoordTransform)
         , fTextureSampler(that.fTextureSampler)
         , fDirection(that.fDirection)
         , fRadius(that.fRadius)
         , fType(that.fType)
         , fUseRange(that.fUseRange) {
-    this->initClassID<GrMorphologyEffect>();
     this->addCoordTransform(&fCoordTransform);
     this->addTextureSampler(&fTextureSampler);
     if (that.fUseRange) {
@@ -403,7 +402,7 @@ static void apply_morphology_rect(GrRenderTargetContext* renderTargetContext,
                                   const float bounds[2],
                                   GrMorphologyEffect::Direction direction) {
     GrPaint paint;
-    paint.setGammaCorrect(renderTargetContext->isGammaCorrect());
+    paint.setGammaCorrect(renderTargetContext->colorSpaceInfo().isGammaCorrect());
 
     paint.addColorFragmentProcessor(GrMorphologyEffect::Make(std::move(proxy),
                                                              direction, radius, morphType,
@@ -422,7 +421,7 @@ static void apply_morphology_rect_no_bounds(GrRenderTargetContext* renderTargetC
                                             GrMorphologyEffect::Type morphType,
                                             GrMorphologyEffect::Direction direction) {
     GrPaint paint;
-    paint.setGammaCorrect(renderTargetContext->isGammaCorrect());
+    paint.setGammaCorrect(renderTargetContext->colorSpaceInfo().isGammaCorrect());
 
     paint.addColorFragmentProcessor(GrMorphologyEffect::Make(std::move(proxy),
                                                              direction, radius, morphType));
@@ -510,7 +509,7 @@ static sk_sp<SkSpecialImage> apply_morphology(
                                               dstRect.width(), radius.fHeight);
         GrColor clearColor =
                 GrMorphologyEffect::Type::kErode == morphType ? SK_ColorWHITE : SK_ColorTRANSPARENT;
-        dstRTContext->clear(&clearRect, clearColor, false);
+        dstRTContext->clear(&clearRect, clearColor, GrRenderTargetContext::CanClearFullscreen::kNo);
 
         srcTexture = dstRTContext->asTextureProxyRef();
         srcRect = dstRect;

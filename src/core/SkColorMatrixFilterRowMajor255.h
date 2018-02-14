@@ -10,7 +10,7 @@
 
 #include "SkColorFilter.h"
 
-class SK_API SkColorMatrixFilterRowMajor255 : public SkColorFilter {
+class SkColorMatrixFilterRowMajor255 : public SkColorFilter {
 public:
     SkColorMatrixFilterRowMajor255() {}
     explicit SkColorMatrixFilterRowMajor255(const SkScalar array[20]);
@@ -23,8 +23,8 @@ public:
     sk_sp<SkColorFilter> makeComposed(sk_sp<SkColorFilter>) const override;
 
 #if SK_SUPPORT_GPU
-    std::unique_ptr<GrFragmentProcessor> asFragmentProcessor(GrContext*,
-                                                             SkColorSpace*) const override;
+    std::unique_ptr<GrFragmentProcessor> asFragmentProcessor(
+            GrContext*, const GrColorSpaceInfo&) const override;
 #endif
 
     SK_TO_STRING_OVERRIDE()

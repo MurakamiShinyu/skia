@@ -36,62 +36,72 @@ struct SkJumper_Engine;
  * If you'd like to see how this works internally, you want to start digging around src/jumper.
  */
 
-#define SK_RASTER_PIPELINE_STAGES(M)                             \
-    M(callback)                                                  \
-    M(move_src_dst) M(move_dst_src)                              \
-    M(clamp_0) M(clamp_1) M(clamp_a) M(clamp_a_dst)              \
-    M(unpremul) M(premul) M(premul_dst)                          \
-    M(set_rgb) M(swap_rb) M(invert)                              \
-    M(from_srgb) M(from_srgb_dst) M(to_srgb)                     \
-    M(black_color) M(white_color) M(uniform_color)               \
-    M(seed_shader) M(dither)                                     \
-    M(load_a8)   M(load_a8_dst)   M(store_a8)   M(gather_a8)     \
-    M(load_g8)   M(load_g8_dst)                 M(gather_g8)     \
-    M(load_565)  M(load_565_dst)  M(store_565)  M(gather_565)    \
-    M(load_4444) M(load_4444_dst) M(store_4444) M(gather_4444)   \
-    M(load_f16)  M(load_f16_dst)  M(store_f16)  M(gather_f16)    \
-    M(load_f32)  M(load_f32_dst)  M(store_f32)                   \
-    M(load_8888) M(load_8888_dst) M(store_8888) M(gather_8888)   \
-    M(load_bgra) M(load_bgra_dst) M(store_bgra) M(gather_bgra)   \
-    M(load_u16_be) M(load_rgb_u16_be) M(store_u16_be)            \
-    M(load_tables_u16_be) M(load_tables_rgb_u16_be)              \
-    M(load_tables) M(load_rgba) M(store_rgba)                    \
-    M(scale_u8) M(scale_565) M(scale_1_float)                    \
-    M( lerp_u8) M( lerp_565) M( lerp_1_float)                    \
-    M(dstatop) M(dstin) M(dstout) M(dstover)                     \
-    M(srcatop) M(srcin) M(srcout) M(srcover)                     \
-    M(clear) M(modulate) M(multiply) M(plus_) M(screen) M(xor_)  \
-    M(colorburn) M(colordodge) M(darken) M(difference)           \
-    M(exclusion) M(hardlight) M(lighten) M(overlay) M(softlight) \
-    M(hue) M(saturation) M(color) M(luminosity)                  \
-    M(srcover_rgba_8888)                                         \
-    M(luminance_to_alpha)                                        \
-    M(matrix_translate) M(matrix_scale_translate)                \
-    M(matrix_2x3) M(matrix_3x4) M(matrix_4x5) M(matrix_4x3)      \
-    M(matrix_perspective)                                        \
-    M(parametric_r) M(parametric_g) M(parametric_b)              \
-    M(parametric_a) M(gamma)                                     \
-    M(table_r) M(table_g) M(table_b) M(table_a)                  \
-    M(lab_to_xyz)                                                \
-                 M(mirror_x)   M(repeat_x)                       \
-                 M(mirror_y)   M(repeat_y)                       \
-    M(clamp_x_1) M(mirror_x_1) M(repeat_x_1)                     \
-    M(bilinear_nx) M(bilinear_px) M(bilinear_ny) M(bilinear_py)  \
-    M(bicubic_n3x) M(bicubic_n1x) M(bicubic_p1x) M(bicubic_p3x)  \
-    M(bicubic_n3y) M(bicubic_n1y) M(bicubic_p1y) M(bicubic_p3y)  \
-    M(save_xy) M(accumulate)                                     \
-    M(evenly_spaced_gradient)                                    \
-    M(gauss_a_to_rgba) M(gradient)                               \
-    M(evenly_spaced_2_stop_gradient)                             \
-    M(xy_to_unit_angle)                                          \
-    M(xy_to_radius)                                              \
-    M(xy_to_2pt_conical_quadratic_min)                           \
-    M(xy_to_2pt_conical_quadratic_max)                           \
-    M(xy_to_2pt_conical_linear)                                  \
-    M(mask_2pt_conical_degenerates) M(apply_vector_mask)         \
-    M(byte_tables) M(byte_tables_rgb)                            \
-    M(rgb_to_hsl) M(hsl_to_rgb)                                  \
-    M(clut_3D) M(clut_4D)
+#define SK_RASTER_PIPELINE_STAGES(M)                               \
+    M(callback)                                                    \
+    M(move_src_dst) M(move_dst_src)                                \
+    M(clamp_0) M(clamp_1) M(clamp_a) M(clamp_a_dst)                \
+    M(unpremul) M(premul) M(premul_dst)                            \
+    M(force_opaque) M(force_opaque_dst)                            \
+    M(set_rgb) M(swap_rb) M(invert)                                \
+    M(from_srgb) M(from_srgb_dst) M(to_srgb)                       \
+    M(black_color) M(white_color) M(uniform_color)                 \
+    M(seed_shader) M(dither)                                       \
+    M(load_a8)   M(load_a8_dst)   M(store_a8)   M(gather_a8)       \
+    M(load_g8)   M(load_g8_dst)                 M(gather_g8)       \
+    M(load_565)  M(load_565_dst)  M(store_565)  M(gather_565)      \
+    M(load_4444) M(load_4444_dst) M(store_4444) M(gather_4444)     \
+    M(load_f16)  M(load_f16_dst)  M(store_f16)  M(gather_f16)      \
+    M(load_f32)  M(load_f32_dst)  M(store_f32)                     \
+    M(load_8888) M(load_8888_dst) M(store_8888) M(gather_8888)     \
+    M(load_bgra) M(load_bgra_dst) M(store_bgra) M(gather_bgra)     \
+    M(load_1010102) M(load_1010102_dst) M(store_1010102) M(gather_1010102) \
+    M(bilerp_clamp_8888)                                           \
+    M(load_u16_be) M(load_rgb_u16_be) M(store_u16_be)              \
+    M(load_tables_u16_be) M(load_tables_rgb_u16_be) M(load_tables) \
+    M(load_rgba) M(store_rgba)                                     \
+    M(scale_u8) M(scale_565) M(scale_1_float)                      \
+    M( lerp_u8) M( lerp_565) M( lerp_1_float)                      \
+    M(dstatop) M(dstin) M(dstout) M(dstover)                       \
+    M(srcatop) M(srcin) M(srcout) M(srcover)                       \
+    M(clear) M(modulate) M(multiply) M(plus_) M(screen) M(xor_)    \
+    M(colorburn) M(colordodge) M(darken) M(difference)             \
+    M(exclusion) M(hardlight) M(lighten) M(overlay) M(softlight)   \
+    M(hue) M(saturation) M(color) M(luminosity)                    \
+    M(srcover_rgba_8888) M(srcover_bgra_8888)                      \
+    M(luminance_to_alpha)                                          \
+    M(matrix_translate) M(matrix_scale_translate)                  \
+    M(matrix_2x3) M(matrix_3x4) M(matrix_4x5) M(matrix_4x3)        \
+    M(matrix_perspective)                                          \
+    M(parametric_r) M(parametric_g) M(parametric_b)                \
+    M(parametric_a) M(gamma) M(gamma_dst)                          \
+    M(table_r) M(table_g) M(table_b) M(table_a)                    \
+    M(lab_to_xyz)                                                  \
+                 M(mirror_x)   M(repeat_x)                         \
+                 M(mirror_y)   M(repeat_y)                         \
+    M(negate_x)                                                    \
+    M(bilinear_nx) M(bilinear_px) M(bilinear_ny) M(bilinear_py)    \
+    M(bicubic_n3x) M(bicubic_n1x) M(bicubic_p1x) M(bicubic_p3x)    \
+    M(bicubic_n3y) M(bicubic_n1y) M(bicubic_p1y) M(bicubic_p3y)    \
+    M(save_xy) M(accumulate)                                       \
+    M(clamp_x_1) M(mirror_x_1) M(repeat_x_1)                       \
+    M(evenly_spaced_gradient)                                      \
+    M(gradient)                                                    \
+    M(evenly_spaced_2_stop_gradient)                               \
+    M(xy_to_unit_angle)                                            \
+    M(xy_to_radius)                                                \
+    M(xy_to_2pt_conical_strip)                                     \
+    M(xy_to_2pt_conical_focal_on_circle)                           \
+    M(xy_to_2pt_conical_well_behaved)                              \
+    M(xy_to_2pt_conical_smaller)                                   \
+    M(xy_to_2pt_conical_greater)                                   \
+    M(alter_2pt_conical_compensate_focal)                          \
+    M(alter_2pt_conical_unswap)                                    \
+    M(mask_2pt_conical_nan)                                        \
+    M(mask_2pt_conical_degenerates) M(apply_vector_mask)           \
+    M(byte_tables) M(byte_tables_rgb)                              \
+    M(rgb_to_hsl) M(hsl_to_rgb)                                    \
+    M(clut_3D) M(clut_4D)                                          \
+    M(gauss_a_to_rgba)
 
 class SkRasterPipeline {
 public:
@@ -124,11 +134,6 @@ public:
 
     void dump() const;
 
-    // Conversion from sRGB can be subtly tricky when premultiplication is involved.
-    // Use these helpers to keep things sane.
-    void append_from_srgb(SkAlphaType);
-    void append_from_srgb_dst(SkAlphaType);
-
     // Appends a stage for the specified matrix.
     // Tries to optimize the stage by analyzing the type of matrix.
     void append_matrix(SkArenaAlloc*, const SkMatrix&);
@@ -144,12 +149,10 @@ public:
         this->append_constant_color(alloc, color.vec());
     }
 
-    bool empty() const { return fStages == nullptr; }
+    // Helper to append(seed_shader) with the normal {+0.5,+1.5,+2.5,...} argument it expects.
+    void append_seed_shader();
 
-    // Used to track if we're handling values outside [0.0f, 1.0f],
-    // and to clamp back to [0.0f, 1.0f] if so.
-    void set_clamped(bool clamped) { fClamped = clamped; }
-    void clamp_if_unclamped(SkAlphaType);
+    bool empty() const { return fStages == nullptr; }
 
 private:
     struct StageList {
@@ -165,7 +168,6 @@ private:
     StageList*    fStages;
     int           fNumStages;
     int           fSlotsNeeded;
-    bool          fClamped;
 };
 
 template <size_t bytes>

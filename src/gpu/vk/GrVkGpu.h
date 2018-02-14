@@ -38,10 +38,8 @@ namespace SkSL {
 
 class GrVkGpu : public GrGpu {
 public:
-    static GrGpu* Create(GrBackendContext backendContext, const GrContextOptions& options,
-                         GrContext* context);
-    static GrGpu* Create(const GrVkBackendContext*, const GrContextOptions& options,
-                         GrContext* context);
+    static sk_sp<GrGpu> Make(GrBackendContext backendContext, const GrContextOptions&, GrContext*);
+    static sk_sp<GrGpu> Make(sk_sp<const GrVkBackendContext>, const GrContextOptions&, GrContext*);
 
     ~GrVkGpu() override;
 
@@ -85,11 +83,12 @@ public:
 
     void xferBarrier(GrRenderTarget*, GrXferBarrierType) override {}
 
-    GrBackendObject createTestingOnlyBackendTexture(void* pixels, int w, int h,
-                                                    GrPixelConfig config,
-                                                    bool isRenderTarget) override;
-    bool isTestingOnlyBackendTexture(GrBackendObject id) const override;
-    void deleteTestingOnlyBackendTexture(GrBackendObject id, bool abandonTexture) override;
+    GrBackendTexture createTestingOnlyBackendTexture(void* pixels, int w, int h,
+                                                     GrPixelConfig config,
+                                                     bool isRenderTarget,
+                                                     GrMipMapped) override;
+    bool isTestingOnlyBackendTexture(const GrBackendTexture&) const override;
+    void deleteTestingOnlyBackendTexture(GrBackendTexture*, bool abandonTexture = false) override;
 
     GrStencilAttachment* createStencilAttachmentForRenderTarget(const GrRenderTarget*,
                                                                 int width,
@@ -121,8 +120,8 @@ public:
         return fCompiler;
     }
 
-    void onResolveRenderTarget(GrRenderTarget* target, GrSurfaceOrigin origin) override {
-        this->internalResolveRenderTarget(target, origin, true);
+    void onResolveRenderTarget(GrRenderTarget* target) override {
+        this->internalResolveRenderTarget(target, true);
     }
 
     void submitSecondaryCommandBuffer(const SkTArray<GrVkSecondaryCommandBuffer*>&,
@@ -137,6 +136,7 @@ public:
 
     sk_sp<GrSemaphore> SK_WARN_UNUSED_RESULT makeSemaphore(bool isOwned) override;
     sk_sp<GrSemaphore> wrapBackendSemaphore(const GrBackendSemaphore& semaphore,
+                                            GrResourceProvider::SemaphoreWrapType wrapType,
                                             GrWrapOwnership ownership) override;
     void insertSemaphore(sk_sp<GrSemaphore> semaphore, bool flush) override;
     void waitSemaphore(sk_sp<GrSemaphore> semaphore) override;
@@ -172,8 +172,7 @@ public:
     GrVkHeap* getHeap(Heap heap) const { return fHeaps[heap].get(); }
 
 private:
-    GrVkGpu(GrContext* context, const GrContextOptions& options,
-            const GrVkBackendContext* backendContext);
+    GrVkGpu(GrContext*, const GrContextOptions&, sk_sp<const GrVkBackendContext> backendContext);
 
     void onResetContext(uint32_t resetBits) override {}
 
@@ -193,8 +192,6 @@ private:
 
     GrBuffer* onCreateBuffer(size_t size, GrBufferType type, GrAccessPattern,
                              const void* data) override;
-
-    gr_instanced::InstancedRendering* onCreateInstancedRendering() override { return nullptr; }
 
     bool onReadPixels(GrSurface* surface, GrSurfaceOrigin,
                       int left, int top, int width, int height,
@@ -221,7 +218,7 @@ private:
     // wait semaphores to the submission of this command buffer.
     void submitCommandBuffer(SyncQueue sync);
 
-    void internalResolveRenderTarget(GrRenderTarget*, GrSurfaceOrigin origin, bool requiresSubmit);
+    void internalResolveRenderTarget(GrRenderTarget*, bool requiresSubmit);
 
     void copySurfaceAsCopyImage(GrSurface* dst, GrSurfaceOrigin dstOrigin,
                                 GrSurface* src, GrSurfaceOrigin srcOrigin,
@@ -251,9 +248,8 @@ private:
                               GrPixelConfig dataConfig,
                               const GrMipLevel texels[], int mipLevelCount);
 
-    void resolveImage(GrSurface* dst, GrSurfaceOrigin dstOrigin,
-                      GrVkRenderTarget* src, GrSurfaceOrigin srcOrigin,
-                      const SkIRect& srcRect, const SkIPoint& dstPoint);
+    void resolveImage(GrSurface* dst, GrVkRenderTarget* src, const SkIRect& srcRect,
+                      const SkIPoint& dstPoint);
 
     sk_sp<const GrVkBackendContext> fBackendContext;
     sk_sp<GrVkCaps>                 fVkCaps;
@@ -269,8 +265,8 @@ private:
 
     GrVkPrimaryCommandBuffer*                    fCurrentCmdBuffer;
 
-    SkSTArray<1, const GrVkSemaphore::Resource*> fSemaphoresToWaitOn;
-    SkSTArray<1, const GrVkSemaphore::Resource*> fSemaphoresToSignal;
+    SkSTArray<1, GrVkSemaphore::Resource*>       fSemaphoresToWaitOn;
+    SkSTArray<1, GrVkSemaphore::Resource*>       fSemaphoresToSignal;
 
     VkPhysicalDeviceMemoryProperties             fPhysDevMemProps;
 

@@ -1,19 +1,20 @@
 # external references that will be documented eventually ...
 #External
- DirectWrite TrueType Windows Linux Android iOS
+ DirectWrite TrueType Windows Linux Android iOS __ANDROID_API__ AHardwareBuffer
  FreeType FreeType-based Harfbuzz   
  Descenders Kerning Unhinted 
- LCD RGB
+ LCD RGB sRGB YUV
+ YUV_Component_Y YUV_Component_U YUV_Component_V
  Unicode Unicode5 UTF-8 UTF-16 UTF-32 ASCII Unichar
  API
- CPU
- GPU GPU-backed OpenGL Vulkan
+ BMP GIF HEIF ICO JPEG PNG WBMP WebP
+ CPU Little_Endian Big_Endian
+ GPU GPU-backed OpenGL Vulkan I/O MSAA UV_Mapping Multi_Sample_Anti_Aliasing GPU_Share_Group
  PDF XPS
  RFC
  NaN NaNs
- Bezier Coons Cartesian
+ Bezier_Curve Coons_Patch Cartesian_Coordinate Euclidean_Distance Euclidean_Space Mip_Map
  C C++ Destructor Subclasses
- SaveLayerFlags # not external; need to add typedef support
  SkUserConfig  # not external, but still thinking about how markup refers to this
  SkXXX.h        # ditto
  SkXXX_Reference # ditto
@@ -25,7 +26,13 @@
  SK_USE_FREETYPE_EMBOLDEN # ditto
  SK_SUPPORT_LEGACY_PAINT_TEXTDECORATION # ditto
  SK_BUILD_FOR_ANDROID_FRAMEWORK # ditto
+ SK_BUILD_FOR_MAC # ditto
+ SK_BUILD_FOR_IOS # ditto
  SK_IGNORE_TO_STRING #  ditto
+ SK_SUPPORT_GPU # ditto
+ SK_HAS_JPEG_LIBRARY # ditto
+ SK_HAS_PNG_LIBRARY # ditto
+ SK_HAS_WEBP_LIBRARY # ditto
 
 # FreeType related
 FT_LOAD_TARGET_LIGHT
@@ -50,6 +57,12 @@ FT_Load_Glyph
 #Topic Arc
 #Alias Arcs
 #Topic ##
+
+#Topic Backend_Semaphore
+#Class GrBackendSemaphore
+#Alias GrBackendSemaphores
+##
+##
 
 #Topic BBH_Factory
 #Class SkBBHFactory
@@ -81,7 +94,10 @@ FT_Load_Glyph
 ##
 
 #Topic Color
-    #Typedef SkColor
+    #Typedef uint32_t SkColor
+    #Typedef ##
+
+    #Typedef uint32_t SkPMColor
     #Typedef ##
 
     # fixme: defines, not methods, need new markup type
@@ -137,6 +153,8 @@ FT_Load_Glyph
 
 #Topic Color_Filter
 #Class SkColorFilter
+#Method void toString(SkString* str) const 
+##
 #Class ##
 #Topic ##
 
@@ -153,6 +171,12 @@ FT_Load_Glyph
 #EnumClass ##
 ##
 
+#Topic Create_Color_Space_Xform_Canvas
+#Method std::unique_ptr<SkCanvas> SK_API SkCreateColorSpaceXformCanvas(SkCanvas* target,
+                                                                       sk_sp<SkColorSpace> targetCS)
+##
+##
+
 #Topic Core_Graphics
 #Substitute Core Graphics
 ##
@@ -166,6 +190,22 @@ FT_Load_Glyph
 ##
 
 #Topic Data
+#Class SkData
+##
+##
+
+#Topic Debugging
+#Method SK_API void SkDebugf(const char format[], ...)
+##
+##
+
+#Topic Deferred_Display_List
+#Class SkDeferredDisplayList
+##
+#Subtopic Recorder
+#Class SkDeferredDisplayListRecorder
+##
+##
 ##
 
 #Topic Device
@@ -205,6 +245,37 @@ FT_Load_Glyph
 
 #Topic Dump_Canvas
 #Class SkDumpCanvas
+##
+#Topic ##
+
+#Topic Encoded_Image_Format
+#EnumClass SkEncodedImageFormat
+    #Const kUnknown 0
+    ##
+    #Const kBMP 1
+    ##
+    #Const kGIF 2
+    ##
+    #Const kICO 3
+    ##
+    #Const kJPEG 4
+    ##
+    #Const kPNG 5
+    ##
+    #Const kWBMP 6
+    ##
+    #Const kWEBP 7
+    ##
+    #Const kPKM 8
+    ##
+    #Const kKTX 9
+    ##
+    #Const kASTC 10
+    ##
+    #Const kDNG 11
+    ##
+    #Const kHEIF 12
+    ##
 ##
 #Topic ##
 
@@ -249,10 +320,21 @@ FT_Load_Glyph
 
 #Topic GPU_Context
 #Substitute GPU context
+#Subtopic Resource_Cache_Limits
+#Alias Resource_Cache_Limits
+##
+#Class GrContext
+#Method void flush()
+##
+##
 ##
 
 #Topic GPU_Surface
 #Substitute GPU surface
+##
+
+#Topic GPU_Texture
+#Substitute GPU texture
 ##
 
 #Topic HTML_Canvas
@@ -262,99 +344,21 @@ FT_Load_Glyph
     ##
 ##
 
-#Topic Image
-    #Subtopic Alpha_Type
-    #Alias Alpha_Type
-        #Enum SkAlphaType
-            #Const kUnknown_SkAlphaType 0
-            ##
-            #Const kOpaque_SkAlphaType 1
-            ##
-            #Const kPremul_SkAlphaType 2
-            ##
-            #Const kUnpremul_SkAlphaType 3
-            ##
-        ##
-    #Subtopic ##
-    #Subtopic Color_Type
-    #Alias Color_Type
-    #Alias Color_Types
-        #Enum SkColorType
-            #Const kUnknown_SkColorType 0
-            ##
-            #Const kAlpha_8_SkColorType 1
-            ##
-            #Const kRGB_565_SkColorType 2
-            ##
-            #Const kARGB_4444_SkColorType 3
-            ##
-            #Const kRGBA_8888_SkColorType 4
-            ##
-            #Const kBGRA_8888_SkColorType 5
-            ##
-            #Const kIndex_8_SkColorType 6
-            ##
-            #Const kGray_8_SkColorType 7
-            ##
-            #Const kRGBA_F16_SkColorType 8
-            ##
-            #ToDo   this is a lie; need to not require values for consts ##
-            #Const kN32_SkColorType 4
-            ##
-        #Enum ##
-    #Subtopic ##
-    #Subtopic Info
-        #Struct SkImageInfo
-            #Method SkImageInfo()
-            ##
-            #Method SkImageInfo makeColorSpace(sk_sp<SkColorSpace> cs) const
-            ##
-            #Method size_t minRowBytes() const
-            ##
-            #Method bool isOpaque() const
-            ##
-            #Method int bytesPerPixel() const
-            ##
-            #Method int height() const
-            ##
-            #Method int width() const
-            ##
-            #Method SkColorType colorType() const
-            ##
-            #Method SkAlphaType alphaType() const
-            ##
-            #Method SkColorSpace* colorSpace() const
-            ##
-            #Method bool isOpaque() const
-            ##
-            #Method size_t minRowBytes() const
-            ##
-            #Method size_t computeByteSize(size_t rowBytes) const
-            ##
-        ## 
-    #Subtopic ##
-    #Class SkImage
-        #Method sk_sp<SkShader> makeShader(SkShader::TileMode, SkShader::TileMode,
-                                   const SkMatrix* localMatrix = nullptr) const
-        ##
-        #Method static sk_sp<SkImage> MakeRasterCopy(const SkPixmap&)
-        ##
-        #Method bool readPixels(const SkPixmap& dst, int srcX, int srcY,
-                    CachingHint = kAllow_CachingHint) const
-        ##
-        #Method bool scalePixels(const SkPixmap& dst, SkFilterQuality, CachingHint = kAllow_CachingHint) const
-        ##
-    ##
-#Topic ##
-
 #Topic Image_Filter
 #Subtopic Scaling
 #Subtopic ##
 #Class SkImageFilter
+#Method void toString(SkString* str) const 
+##
 #Class ##
 #Topic ##
 
 #Topic Image_Scaling
+##
+
+#Topic ISize
+#Struct SkISize
+##
 ##
 
 #Topic Left_Side_Bearing 
@@ -398,6 +402,8 @@ FT_Load_Glyph
 #Method virtual bool filterMask(SkMask* dst, const SkMask& src, const SkMatrix&,
                             SkIPoint* margin) const
 ##
+#Method void toString(SkString* str) const 
+##
 #Class ##
 #Topic ##
 
@@ -416,6 +422,17 @@ FT_Load_Glyph
     ##
     #Method SkScalarCeilToScalar(x)
     ##
+    #Method SkScalarIsFinite(x)
+    ##
+    #Method SkScalarIsNaN(x)
+    ##
+    #Method template <typename D, typename S> inline bool SkTFitsIn(S s)
+    ##
+##
+
+#Topic Meta_Data
+#Class SkMetaData
+##
 ##
 
 #Topic Mip_Map
@@ -425,10 +442,22 @@ FT_Load_Glyph
 ##
 
 #Topic Number_Types
-    #Typedef SkGlyphID
+    #Typedef uint16_t SkGlyphID
     #Typedef ##
-    #Typedef SkScalar
+    #Topic Scalar
+    #Alias Scalar
+    #Typedef float SkScalar
     #Typedef ##
+    ##
+    #Const SK_MinS32FitsInFloat
+    to be written
+    ##
+    #Const SK_MaxS32FitsInFloat
+    to be written
+    ##
+    #Const SK_ScalarMin
+    to be written
+    ##
     #Const SK_ScalarMax
     to be written
     ##
@@ -441,9 +470,18 @@ FT_Load_Glyph
     #Const SK_ScalarNaN
     to be written
     ##
-    #Typedef SkUnichar
+    #Const SK_MinS32
+    to be written
+    ##
+    #Const SK_MaxS32
+    to be written
+    ##
+    #Const SK_MaxSizeT
+    to be written
+    ##
+    #Typedef int32_t SkUnichar
     #Typedef ##
-    #Typedef U8CPU
+    #Typedef unsigned U8CPU
     #Typedef ##
 #Topic ##
 
@@ -472,6 +510,8 @@ FT_Load_Glyph
 
 #Topic Path_Effect
     #Class SkPathEffect
+    #Method void toString(SkString* str) const
+    ##
     #Class ##
 #Topic ##
 
@@ -488,6 +528,10 @@ FT_Load_Glyph
 #Topic ##
 
 #Topic Picture
+#Class SkPicture
+#Method virtual void playback(SkCanvas*, AbortCallback* = nullptr) const = 0
+##
+##
 #Subtopic Recorder
     #Class SkPictureRecorder
         #Method SkCanvas* beginRecording(const SkRect& bounds,
@@ -519,15 +563,13 @@ FT_Load_Glyph
 #Enum SkPixelGeometry
 ##
 
-#Topic Point
-#Alias Points
-    #Struct SkPoint
-        #Method bool equalsWithinTolerance(const SkPoint& p) const
-        ##
-    #Struct ##
-    #Subtopic Array
-    #Substitute SkPoint arrays
-    #Subtopic ##
+# Topic Point_Array
+# Substitute SkPoint arrays
+# Topic ##
+
+#Topic Point3
+#Struct SkPoint3
+##
 #Topic ##
 
 #Topic PostScript
@@ -553,6 +595,9 @@ FT_Load_Glyph
 ##
 ##
 
+#Topic Raster_Bitmap
+##
+
 #Topic Raster_Surface
 ##
 
@@ -576,6 +621,11 @@ FT_Load_Glyph
 ##
 #Topic ##
 
+#Topic Render_Target
+#Class GrRenderTarget
+##
+##
+
 #Topic Right_Side_Bearing
 ##
 
@@ -598,6 +648,10 @@ FT_Load_Glyph
     #Enum TileMode
         #Const kClamp_TileMode 0
         ##
+        #Const kRepeat_TileMode 1
+        ##
+        #Const kMirror_TileMode 2
+        ##
     ##
     #Method static sk_sp<SkShader> MakeBitmapShader(const SkBitmap& src, TileMode tmx, TileMode tmy,
                                             const SkMatrix* localMatrix = nullptr)
@@ -608,7 +662,8 @@ FT_Load_Glyph
 #Topic ##
 
 #Topic Size
-#Alias ISize
+#Struct SkSize
+##
 ##
 
 #Topic Sprite
@@ -616,7 +671,7 @@ FT_Load_Glyph
 #Topic ##
 
 #Topic Stream
-#Class SkFlattenable
+#Class SkStream
 #Class ##
 #Topic ##
 
@@ -628,15 +683,12 @@ FT_Load_Glyph
 #Topic Supersampling
 ##
 
-#Topic Surface
-#Class SkSurface
-    #Method static sk_sp<SkSurface> MakeRasterDirect(const SkImageInfo&, void* pixels, size_t rowBytes,
-                                             const SkSurfaceProps* = nullptr)
-    ##
-    #Method bool readPixels(const SkPixmap& dst, int srcX, int srcY);
-    ##
+#Topic Surface_Characterization
+#Class SkSurfaceCharacterization
 ##
-#Subtopic Properties
+##
+
+#Topic Surface_Properties
     #Class SkSurfaceProps
         #Topic Legacy_Font_Host
         #Enum InitType
@@ -645,7 +697,6 @@ FT_Load_Glyph
         ##
         #Topic ##
     ##
-##
 ##
 
 #Topic SVG
@@ -663,18 +714,46 @@ FT_Load_Glyph
 #Class ##
 #Topic ##
 
+#Topic Texture
+#Class GrBackendTexture
+##
+##
+
 #Topic Typeface
 #Class SkTypeface
 #Class ##
 #Topic ##
 
+#Topic Types
+    #Typedef intptr_t GrBackendObject
+    #Typedef ##
+
+    #Enum GrSurfaceOrigin
+    #Const kBottomLeft_GrSurfaceOrigin 0 
+    ##
+    #Const kTopLeft_GrSurfaceOrigin 1
+    ##
+    #Enum ##
+
+    #Subtopic Budgeted
+    #EnumClass SkBudgeted
+    #Const kNo 0
+    ##
+    #Const kYes 1
+    ##
+    #EnumClass ##
+    ##
+
+    #EnumClass GrSemaphoresSubmitted
+    #Const kNo 0
+    ##
+    #Const kYes 1
+    ##
+    #EnumClass ##
+#Topic ##
+
 #Topic Unpremultiply
 #Alias Unpremultiplied
-##
-
-#Topic Vector
-#Struct SkVector
-##
 ##
 
 #Topic Vertices
@@ -693,3 +772,4 @@ FT_Load_Glyph
     #Struct SkWriteBuffer
     #Struct ##
 #Topic ##
+

@@ -86,8 +86,8 @@ public:
     sk_sp<SkColorFilter> makeComposed(sk_sp<SkColorFilter> inner) const override;
 
 #if SK_SUPPORT_GPU
-    std::unique_ptr<GrFragmentProcessor> asFragmentProcessor(GrContext*,
-                                                             SkColorSpace*) const override;
+    std::unique_ptr<GrFragmentProcessor> asFragmentProcessor(
+            GrContext*, const GrColorSpaceInfo&) const override;
 #endif
 
     SK_TO_STRING_OVERRIDE()
@@ -112,13 +112,6 @@ public:
         if (fFlags & kR_Flag) { r = ptr; ptr += 256; }
         if (fFlags & kG_Flag) { g = ptr; ptr += 256; }
         if (fFlags & kB_Flag) { b = ptr;             }
-
-        // If our inputs are out of range, we'd attempt to read values outside our tables.
-        // We could finesse this with p->clamp_if_unclamped(kPremul_SkAlphaType) here, but
-        // this filter is already slow enough that I'd rather just be paranoid and safe.
-        p->append(SkRasterPipeline::clamp_0);
-        p->append(SkRasterPipeline::clamp_a);
-        p->set_clamped(true);
 
         if (!shaderIsOpaque) {
             p->append(SkRasterPipeline::unpremul);
@@ -320,7 +313,9 @@ sk_sp<SkColorFilter> SkTable_ColorFilter::makeComposed(sk_sp<SkColorFilter> inne
 
 #if SK_SUPPORT_GPU
 
+#include "GrColorSpaceInfo.h"
 #include "GrContext.h"
+#include "GrContextPriv.h"
 #include "GrFragmentProcessor.h"
 #include "GrTextureStripAtlas.h"
 #include "SkGr.h"
@@ -449,17 +444,24 @@ std::unique_ptr<GrFragmentProcessor> ColorTableEffect::Make(GrContext* context,
     desc.fWidth  = bitmap.width();
     desc.fHeight = 128;
     desc.fRowHeight = bitmap.height();
-
     // TODO: this seems a bit heavy handed (passing a GrContext as part of the desc)
     desc.fContext = context;
     desc.fConfig = SkImageInfo2GrPixelConfig(bitmap.info(), *context->caps());
+
     GrTextureStripAtlas* atlas = GrTextureStripAtlas::GetAtlas(desc);
     int row = atlas->lockRow(bitmap);
     sk_sp<GrTextureProxy> proxy;
     if (-1 == row) {
         atlas = nullptr;
 
-        proxy = GrMakeCachedBitmapProxy(context->resourceProvider(), bitmap);
+        SkASSERT(bitmap.isImmutable());
+
+        sk_sp<SkImage> srcImage = SkImage::MakeFromBitmap(bitmap);
+        if (!srcImage) {
+            return nullptr;
+        }
+
+        proxy = GrMakeCachedImageProxy(context->contextPriv().proxyProvider(), std::move(srcImage));
     } else {
         proxy = atlas->asTextureProxyRef();
     }
@@ -472,11 +474,11 @@ std::unique_ptr<GrFragmentProcessor> ColorTableEffect::Make(GrContext* context,
 }
 
 ColorTableEffect::ColorTableEffect(sk_sp<GrTextureProxy> proxy, GrTextureStripAtlas* atlas, int row)
-        : INHERITED(kNone_OptimizationFlags)  // Not bothering with table-specific optimizations.
+        : INHERITED(kColorTableEffect_ClassID,
+                    kNone_OptimizationFlags)  // Not bothering with table-specific optimizations.
         , fTextureSampler(std::move(proxy))
         , fAtlas(atlas)
         , fRow(row) {
-    this->initClassID<ColorTableEffect>();
     this->addTextureSampler(&fTextureSampler);
 }
 
@@ -538,14 +540,15 @@ std::unique_ptr<GrFragmentProcessor> ColorTableEffect::TestCreate(GrProcessorTes
         (flags & (1 << 3)) ? luts[3] : nullptr
     ));
     sk_sp<SkColorSpace> colorSpace = GrTest::TestColorSpace(d->fRandom);
-    auto fp = filter->asFragmentProcessor(d->context(), colorSpace.get());
+    auto fp = filter->asFragmentProcessor(
+            d->context(), GrColorSpaceInfo(std::move(colorSpace), kRGBA_8888_GrPixelConfig));
     SkASSERT(fp);
     return fp;
 }
 #endif
 
-std::unique_ptr<GrFragmentProcessor> SkTable_ColorFilter::asFragmentProcessor(GrContext* context,
-                                                                              SkColorSpace*) const {
+std::unique_ptr<GrFragmentProcessor> SkTable_ColorFilter::asFragmentProcessor(
+        GrContext* context, const GrColorSpaceInfo&) const {
     SkBitmap bitmap;
     this->asComponentTable(&bitmap);
 

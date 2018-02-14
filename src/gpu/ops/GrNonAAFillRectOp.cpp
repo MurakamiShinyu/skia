@@ -72,7 +72,8 @@ static void tesselate(intptr_t vertices,
                       const GrQuad* localQuad) {
     SkPoint* positions = reinterpret_cast<SkPoint*>(vertices);
 
-    positions->setRectFan(rect.fLeft, rect.fTop, rect.fRight, rect.fBottom, vertexStride);
+    SkPointPriv::SetRectTriStrip(positions, rect.fLeft, rect.fTop, rect.fRight, rect.fBottom,
+            vertexStride);
 
     if (viewMatrix) {
         SkMatrixPriv::MapPointsWithStride(*viewMatrix, positions, vertexStride, kVertsPerRect);
@@ -182,7 +183,7 @@ private:
         size_t vertexStride = gp->getVertexStride();
         int rectCount = fRects.count();
 
-        sk_sp<const GrBuffer> indexBuffer(target->resourceProvider()->refQuadIndexBuffer());
+        sk_sp<const GrBuffer> indexBuffer = target->resourceProvider()->refQuadIndexBuffer();
         PatternHelper helper(GrPrimitiveType::kTriangles);
         void* vertices = helper.init(target, vertexStride, indexBuffer.get(), kVertsPerRect,
                                      kIndicesPerRect, rectCount);
@@ -272,7 +273,7 @@ public:
         SkString str;
         str.appendf("# combined: %d\n", fRects.count());
         for (int i = 0; i < fRects.count(); ++i) {
-            const RectInfo& geo = fRects[0];
+            const RectInfo& geo = fRects[i];
             str.appendf("%d: Color: 0x%08x, Rect [L: %.2f, T: %.2f, R: %.2f, B: %.2f]\n", i,
                         geo.fColor, geo.fRect.fLeft, geo.fRect.fTop, geo.fRect.fRight,
                         geo.fRect.fBottom);
@@ -310,7 +311,7 @@ private:
         size_t vertexStride = gp->getVertexStride();
         int rectCount = fRects.count();
 
-        sk_sp<const GrBuffer> indexBuffer(target->resourceProvider()->refQuadIndexBuffer());
+        sk_sp<const GrBuffer> indexBuffer = target->resourceProvider()->refQuadIndexBuffer();
         PatternHelper helper(GrPrimitiveType::kTriangles);
         void* vertices = helper.init(target, vertexStride, indexBuffer.get(), kVertsPerRect,
                                      kIndicesPerRect, rectCount);

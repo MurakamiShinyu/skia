@@ -13,12 +13,10 @@
 #include "GrRect.h"
 #include "GrRenderTargetContext.h"
 #include "GrResourceAllocator.h"
-#include "instanced/InstancedRendering.h"
 #include "ops/GrClearOp.h"
 #include "ops/GrCopySurfaceOp.h"
 #include "SkTraceEvent.h"
 
-using gr_instanced::InstancedRendering;
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -26,14 +24,12 @@ using gr_instanced::InstancedRendering;
 static const int kMaxOpLookback = 10;
 static const int kMaxOpLookahead = 10;
 
-GrRenderTargetOpList::GrRenderTargetOpList(GrRenderTargetProxy* proxy, GrGpu* gpu,
+GrRenderTargetOpList::GrRenderTargetOpList(GrRenderTargetProxy* proxy,
+                                           GrResourceProvider* resourceProvider,
                                            GrAuditTrail* auditTrail)
-        : INHERITED(gpu->getContext()->resourceProvider(), proxy, auditTrail)
+        : INHERITED(resourceProvider, proxy, auditTrail)
         , fLastClipStackGenID(SK_InvalidUniqueID)
         SkDEBUGCODE(, fNumClips(0)) {
-    if (GrCaps::InstancedSupport::kNone != gpu->caps()->instancedSupport()) {
-        fInstancedRendering.reset(gpu->createInstancedRendering());
-    }
 }
 
 GrRenderTargetOpList::~GrRenderTargetOpList() {
@@ -49,7 +45,7 @@ void GrRenderTargetOpList::dump() const {
     for (int i = 0; i < fRecordedOps.count(); ++i) {
         SkDebugf("*******************************\n");
         if (!fRecordedOps[i].fOp) {
-            SkDebugf("%d: <combined forward>\n", i);
+            SkDebugf("%d: <combined forward or failed instantiation>\n", i);
         } else {
             SkDebugf("%d: %s\n", i, fRecordedOps[i].fOp->name());
             SkString str = fRecordedOps[i].fOp->dumpInfo();
@@ -58,6 +54,12 @@ void GrRenderTargetOpList::dump() const {
             SkDebugf("ClippedBounds: [L: %.2f, T: %.2f, R: %.2f, B: %.2f]\n", bounds.fLeft,
                      bounds.fTop, bounds.fRight, bounds.fBottom);
         }
+    }
+}
+
+void GrRenderTargetOpList::visitProxies_debugOnly(const GrOp::VisitProxyFunc& func) const {
+    for (const RecordedOp& recordedOp : fRecordedOps) {
+        recordedOp.visitProxies(func);
     }
 }
 #endif
@@ -75,20 +77,17 @@ void GrRenderTargetOpList::onPrepare(GrOpFlushState* flushState) {
 #ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
             TRACE_EVENT0("skia", fRecordedOps[i].fOp->name());
 #endif
-            GrOpFlushState::DrawOpArgs opArgs = {
+            GrOpFlushState::OpArgs opArgs = {
+                fRecordedOps[i].fOp.get(),
                 fTarget.get()->asRenderTargetProxy(),
                 fRecordedOps[i].fAppliedClip,
                 fRecordedOps[i].fDstProxy
             };
 
-            flushState->setDrawOpArgs(&opArgs);
+            flushState->setOpArgs(&opArgs);
             fRecordedOps[i].fOp->prepare(flushState);
-            flushState->setDrawOpArgs(nullptr);
+            flushState->setOpArgs(nullptr);
         }
-    }
-
-    if (fInstancedRendering) {
-        fInstancedRendering->beginFlush(flushState->resourceProvider());
     }
 }
 
@@ -163,15 +162,16 @@ bool GrRenderTargetOpList::onExecute(GrOpFlushState* flushState) {
         TRACE_EVENT0("skia", fRecordedOps[i].fOp->name());
 #endif
 
-        GrOpFlushState::DrawOpArgs opArgs {
+        GrOpFlushState::OpArgs opArgs {
+            fRecordedOps[i].fOp.get(),
             fTarget.get()->asRenderTargetProxy(),
             fRecordedOps[i].fAppliedClip,
             fRecordedOps[i].fDstProxy
         };
 
-        flushState->setDrawOpArgs(&opArgs);
+        flushState->setOpArgs(&opArgs);
         fRecordedOps[i].fOp->execute(flushState);
-        flushState->setDrawOpArgs(nullptr);
+        flushState->setOpArgs(nullptr);
     }
 
     finish_command_buffer(commandBuffer.get());
@@ -183,24 +183,8 @@ bool GrRenderTargetOpList::onExecute(GrOpFlushState* flushState) {
 void GrRenderTargetOpList::endFlush() {
     fLastClipStackGenID = SK_InvalidUniqueID;
     fRecordedOps.reset();
-    if (fInstancedRendering) {
-        fInstancedRendering->endFlush();
-        fInstancedRendering = nullptr;
-    }
-
+    fClipAllocator.reset();
     INHERITED::endFlush();
-}
-
-void GrRenderTargetOpList::abandonGpuResources() {
-    if (fInstancedRendering) {
-        fInstancedRendering->resetGpuResources(InstancedRendering::ResetType::kAbandon);
-    }
-}
-
-void GrRenderTargetOpList::freeGpuResources() {
-    if (fInstancedRendering) {
-        fInstancedRendering->resetGpuResources(InstancedRendering::ResetType::kDestroy);
-    }
 }
 
 void GrRenderTargetOpList::discard() {
@@ -254,21 +238,55 @@ bool GrRenderTargetOpList::copySurface(const GrCaps& caps,
     return true;
 }
 
+void GrRenderTargetOpList::purgeOpsWithUninstantiatedProxies() {
+    bool hasUninstantiatedProxy = false;
+    auto checkInstantiation = [ &hasUninstantiatedProxy ] (GrSurfaceProxy* p) {
+        if (!p->priv().isInstantiated()) {
+            hasUninstantiatedProxy = true;
+        }
+    };
+    for (RecordedOp& recordedOp : fRecordedOps) {
+        hasUninstantiatedProxy = false;
+        recordedOp.visitProxies(checkInstantiation);
+        if (hasUninstantiatedProxy) {
+            // When instantiation of the proxy fails we drop the Op
+            recordedOp.fOp = nullptr;
+        }
+    }
+}
+
 void GrRenderTargetOpList::gatherProxyIntervals(GrResourceAllocator* alloc) const {
     unsigned int cur = alloc->numOps();
 
+    for (int i = 0; i < fDeferredProxies.count(); ++i) {
+        SkASSERT(!fDeferredProxies[i]->priv().isInstantiated());
+        // We give all the deferred proxies a write usage at the very start of flushing. This
+        // locks them out of being reused for the entire flush until they are read - and then
+        // they can be recycled. This is a bit unfortunate because a flush can proceed in waves
+        // with sub-flushes. The deferred proxies only need to be pinned from the start of
+        // the sub-flush in which they appear.
+        alloc->addInterval(fDeferredProxies[i], 0, 0);
+    }
+
     // Add the interval for all the writes to this opList's target
-    alloc->addInterval(fTarget.get(), cur, cur+fRecordedOps.count()-1);
+    if (fRecordedOps.count()) {
+        alloc->addInterval(fTarget.get(), cur, cur+fRecordedOps.count()-1);
+    } else {
+        // This can happen if there is a loadOp (e.g., a clear) but no other draws. In this case we
+        // still need to add an interval for the destination so we create a fake op# for
+        // the missing clear op.
+        alloc->addInterval(fTarget.get());
+        alloc->incOps();
+    }
 
-    auto gather = [ alloc ] (GrSurfaceProxy* p) {
-        alloc->addInterval(p);
+    auto gather = [ alloc SkDEBUGCODE(, this) ] (GrSurfaceProxy* p) {
+        alloc->addInterval(p SkDEBUGCODE(, fTarget.get() == p));
     };
-    for (int i = 0; i < fRecordedOps.count(); ++i) {
-        SkASSERT(alloc->curOp() == cur+i);
+    for (const RecordedOp& recordedOp : fRecordedOps) {
+        recordedOp.visitProxies(gather); // only diff from the GrTextureOpList version
 
-        const GrOp* op = fRecordedOps[i].fOp.get(); // only diff from the GrTextureOpList version
-        op->visitProxies(gather);
-
+        // Even though the op may have been moved we still need to increment the op count to
+        // keep all the math consistent.
         alloc->incOps();
     }
 }

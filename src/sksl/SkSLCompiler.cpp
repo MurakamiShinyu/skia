@@ -12,7 +12,9 @@
 #include "SkSLGLSLCodeGenerator.h"
 #include "SkSLHCodeGenerator.h"
 #include "SkSLIRGenerator.h"
+#include "SkSLMetalCodeGenerator.h"
 #include "SkSLSPIRVCodeGenerator.h"
+#include "ir/SkSLEnum.h"
 #include "ir/SkSLExpression.h"
 #include "ir/SkSLExpressionStatement.h"
 #include "ir/SkSLIntLiteral.h"
@@ -27,28 +29,29 @@
 #include "spirv-tools/libspirv.hpp"
 #endif
 
-#define STRINGIFY(x) #x
-
 // include the built-in shader symbols as static strings
 
+#define STRINGIFY(x) #x
+
 static const char* SKSL_INCLUDE =
-#include "sksl.include"
+#include "sksl.inc"
 ;
 
 static const char* SKSL_VERT_INCLUDE =
-#include "sksl_vert.include"
+#include "sksl_vert.inc"
 ;
 
 static const char* SKSL_FRAG_INCLUDE =
-#include "sksl_frag.include"
+#include "sksl_frag.inc"
 ;
 
 static const char* SKSL_GEOM_INCLUDE =
-#include "sksl_geom.include"
+#include "sksl_geom.inc"
 ;
 
 static const char* SKSL_FP_INCLUDE =
-#include "sksl_fp.include"
+#include "sksl_enums.inc"
+#include "sksl_fp.inc"
 ;
 
 namespace SkSL {
@@ -184,7 +187,7 @@ Compiler::Compiler(Flags flags)
     ADD_TYPE(SamplerCubeArrayShadow);
     ADD_TYPE(GSampler2DArrayShadow);
     ADD_TYPE(GSamplerCubeArrayShadow);
-    ADD_TYPE(ColorSpaceXform);
+    ADD_TYPE(FragmentProcessor);
 
     StringFragment skCapsName("sk_Caps");
     Variable* skCaps = new Variable(-1, Modifiers(), skCapsName,
@@ -197,7 +200,8 @@ Compiler::Compiler(Flags flags)
     fIRGenerator->fSymbolTable->add(skArgsName, std::unique_ptr<Symbol>(skArgs));
 
     std::vector<std::unique_ptr<ProgramElement>> ignored;
-    fIRGenerator->convertProgram(SKSL_INCLUDE, strlen(SKSL_INCLUDE), *fTypes, &ignored);
+    fIRGenerator->convertProgram(Program::kFragment_Kind, SKSL_INCLUDE, strlen(SKSL_INCLUDE),
+                                 *fTypes, &ignored);
     fIRGenerator->fSymbolTable->markAllFunctionsBuiltin();
     if (fErrorCount) {
         printf("Unexpected errors: %s\n", fErrorText.c_str());
@@ -240,6 +244,17 @@ void Compiler::addDefinition(const Expression* lvalue, std::unique_ptr<Expressio
         case Expression::kFieldAccess_Kind:
             // see comments in Swizzle
             this->addDefinition(((FieldAccess*) lvalue)->fBase.get(),
+                                (std::unique_ptr<Expression>*) &fContext.fDefined_Expression,
+                                definitions);
+            break;
+        case Expression::kTernary_Kind:
+            // To simplify analysis, we just pretend that we write to both sides of the ternary.
+            // This allows for false positives (meaning we fail to detect that a variable might not
+            // have been assigned), but is preferable to false negatives.
+            this->addDefinition(((TernaryExpression*) lvalue)->fIfTrue.get(),
+                                (std::unique_ptr<Expression>*) &fContext.fDefined_Expression,
+                                definitions);
+            this->addDefinition(((TernaryExpression*) lvalue)->fIfFalse.get(),
                                 (std::unique_ptr<Expression>*) &fContext.fDefined_Expression,
                                 definitions);
             break;
@@ -392,6 +407,10 @@ static bool is_dead(const Expression& lvalue) {
             const IndexExpression& idx = (IndexExpression&) lvalue;
             return is_dead(*idx.fBase) && !idx.fIndex->hasSideEffects();
         }
+        case Expression::kTernary_Kind: {
+            const TernaryExpression& t = (TernaryExpression&) lvalue;
+            return !t.fTest->hasSideEffects() && is_dead(*t.fIfTrue) && is_dead(*t.fIfFalse);
+        }
         default:
             ABORT("invalid lvalue: %s\n", lvalue.description().c_str());
     }
@@ -478,6 +497,7 @@ void delete_left(BasicBlock* b,
     std::unique_ptr<Expression>* target = (*iter)->expression();
     ASSERT((*target)->fKind == Expression::kBinary_Kind);
     BinaryExpression& bin = (BinaryExpression&) **target;
+    ASSERT(!bin.fLeft->hasSideEffects());
     bool result;
     if (bin.fOperator == Token::EQ) {
         result = b->tryRemoveLValueBefore(iter, bin.fLeft.get());
@@ -515,6 +535,7 @@ void delete_right(BasicBlock* b,
     std::unique_ptr<Expression>* target = (*iter)->expression();
     ASSERT((*target)->fKind == Expression::kBinary_Kind);
     BinaryExpression& bin = (BinaryExpression&) **target;
+    ASSERT(!bin.fRight->hasSideEffects());
     if (!b->tryRemoveExpressionBefore(iter, bin.fRight.get())) {
         *target = std::move(bin.fLeft);
         *outNeedsRescan = true;
@@ -692,14 +713,17 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
                     }
                     else if (is_constant(*bin->fLeft, 0)) {
                         if (bin->fLeft->fType.kind() == Type::kScalar_Kind &&
-                            bin->fRight->fType.kind() == Type::kVector_Kind) {
+                            bin->fRight->fType.kind() == Type::kVector_Kind &&
+                            !bin->fRight->hasSideEffects()) {
                             // 0 * float4(x) -> float4(0)
                             vectorize_left(&b, iter, outUpdated, outNeedsRescan);
                         } else {
                             // 0 * x -> 0
                             // float4(0) * x -> float4(0)
                             // float4(0) * float4(x) -> float4(0)
-                            delete_right(&b, iter, outUpdated, outNeedsRescan);
+                            if (!bin->fRight->hasSideEffects()) {
+                                delete_right(&b, iter, outUpdated, outNeedsRescan);
+                            }
                         }
                     }
                     else if (is_constant(*bin->fRight, 1)) {
@@ -716,14 +740,17 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
                     }
                     else if (is_constant(*bin->fRight, 0)) {
                         if (bin->fLeft->fType.kind() == Type::kVector_Kind &&
-                            bin->fRight->fType.kind() == Type::kScalar_Kind) {
+                            bin->fRight->fType.kind() == Type::kScalar_Kind &&
+                            !bin->fLeft->hasSideEffects()) {
                             // float4(x) * 0 -> float4(0)
                             vectorize_right(&b, iter, outUpdated, outNeedsRescan);
                         } else {
                             // x * 0 -> 0
                             // x * float4(0) -> float4(0)
                             // float4(x) * float4(0) -> float4(0)
-                            delete_left(&b, iter, outUpdated, outNeedsRescan);
+                            if (!bin->fLeft->hasSideEffects()) {
+                                delete_left(&b, iter, outUpdated, outNeedsRescan);
+                            }
                         }
                     }
                     break;
@@ -780,14 +807,17 @@ void Compiler::simplifyExpression(DefinitionMap& definitions,
                         }
                     } else if (is_constant(*bin->fLeft, 0)) {
                         if (bin->fLeft->fType.kind() == Type::kScalar_Kind &&
-                            bin->fRight->fType.kind() == Type::kVector_Kind) {
+                            bin->fRight->fType.kind() == Type::kVector_Kind &&
+                            !bin->fRight->hasSideEffects()) {
                             // 0 / float4(x) -> float4(0)
                             vectorize_left(&b, iter, outUpdated, outNeedsRescan);
                         } else {
                             // 0 / x -> 0
                             // float4(0) / x -> float4(0)
                             // float4(0) / float4(x) -> float4(0)
-                            delete_right(&b, iter, outUpdated, outNeedsRescan);
+                            if (!bin->fRight->hasSideEffects()) {
+                                delete_right(&b, iter, outUpdated, outNeedsRescan);
+                            }
                         }
                     }
                     break;
@@ -1135,26 +1165,31 @@ std::unique_ptr<Program> Compiler::convertProgram(Program::Kind kind, String tex
     std::vector<std::unique_ptr<ProgramElement>> elements;
     switch (kind) {
         case Program::kVertex_Kind:
-            fIRGenerator->convertProgram(SKSL_VERT_INCLUDE, strlen(SKSL_VERT_INCLUDE), *fTypes,
-                                         &elements);
+            fIRGenerator->convertProgram(kind, SKSL_VERT_INCLUDE, strlen(SKSL_VERT_INCLUDE),
+                                         *fTypes, &elements);
             break;
         case Program::kFragment_Kind:
-            fIRGenerator->convertProgram(SKSL_FRAG_INCLUDE, strlen(SKSL_FRAG_INCLUDE), *fTypes,
-                                         &elements);
+            fIRGenerator->convertProgram(kind, SKSL_FRAG_INCLUDE, strlen(SKSL_FRAG_INCLUDE),
+                                         *fTypes, &elements);
             break;
         case Program::kGeometry_Kind:
-            fIRGenerator->convertProgram(SKSL_GEOM_INCLUDE, strlen(SKSL_GEOM_INCLUDE), *fTypes,
-                                         &elements);
+            fIRGenerator->convertProgram(kind, SKSL_GEOM_INCLUDE, strlen(SKSL_GEOM_INCLUDE),
+                                         *fTypes, &elements);
             break;
         case Program::kFragmentProcessor_Kind:
-            fIRGenerator->convertProgram(SKSL_FP_INCLUDE, strlen(SKSL_FP_INCLUDE), *fTypes,
+            fIRGenerator->convertProgram(kind, SKSL_FP_INCLUDE, strlen(SKSL_FP_INCLUDE), *fTypes,
                                          &elements);
             break;
     }
     fIRGenerator->fSymbolTable->markAllFunctionsBuiltin();
+    for (auto& element : elements) {
+        if (element->fKind == ProgramElement::kEnum_Kind) {
+            ((Enum&) *element).fBuiltin = true;
+        }
+    }
     std::unique_ptr<String> textPtr(new String(std::move(text)));
     fSource = textPtr.get();
-    fIRGenerator->convertProgram(textPtr->c_str(), textPtr->size(), *fTypes, &elements);
+    fIRGenerator->convertProgram(kind, textPtr->c_str(), textPtr->size(), *fTypes, &elements);
     if (!fErrorCount) {
         for (auto& element : elements) {
             if (element->fKind == ProgramElement::kFunction_Kind) {
@@ -1235,6 +1270,13 @@ bool Compiler::toGLSL(const Program& program, String* out) {
     return result;
 }
 
+bool Compiler::toMetal(const Program& program, OutputStream& out) {
+    MetalCodeGenerator cg(&fContext, &program, this, &out);
+    bool result = cg.generateCode();
+    this->writeErrorCount();
+    return result;
+}
+
 bool Compiler::toCPP(const Program& program, String name, OutputStream& out) {
     fSource = program.fSource.get();
     CPPCodeGenerator cg(&fContext, &program, this, name, &out);
@@ -1246,7 +1288,7 @@ bool Compiler::toCPP(const Program& program, String name, OutputStream& out) {
 
 bool Compiler::toH(const Program& program, String name, OutputStream& out) {
     fSource = program.fSource.get();
-    HCodeGenerator cg(&program, this, name, &out);
+    HCodeGenerator cg(&fContext, &program, this, name, &out);
     bool result = cg.generateCode();
     fSource = nullptr;
     this->writeErrorCount();

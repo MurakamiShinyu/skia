@@ -19,7 +19,7 @@
 #include "GrRenderTargetContextPriv.h"
 #include "GrResourceProvider.h"
 #include "SkMakeUnique.h"
-#include "glsl/GrGLSLVertexShaderBuilder.h"
+#include "glsl/GrGLSLVertexGeoBuilder.h"
 #include "glsl/GrGLSLFragmentShaderBuilder.h"
 #include "glsl/GrGLSLGeometryProcessor.h"
 #include "glsl/GrGLSLVarying.h"
@@ -59,10 +59,9 @@ struct Vertex {
 class GrPipelineDynamicStateTestProcessor : public GrGeometryProcessor {
 public:
     GrPipelineDynamicStateTestProcessor()
-        : fVertex(this->addVertexAttrib("vertex", kHalf2_GrVertexAttribType))
-        , fColor(this->addVertexAttrib("color", kUByte4_norm_GrVertexAttribType)) {
-        this->initClassID<GrPipelineDynamicStateTestProcessor>();
-    }
+        : INHERITED(kGrPipelineDynamicStateTestProcessor_ClassID)
+        , fVertex(this->addVertexAttrib("vertex", kHalf2_GrVertexAttribType))
+        , fColor(this->addVertexAttrib("color", kUByte4_norm_GrVertexAttribType)) {}
 
     const char* name() const override { return "GrPipelineDynamicStateTest Processor"; }
 
@@ -147,7 +146,7 @@ private:
 
 DEF_GPUTEST_FOR_RENDERING_CONTEXTS(GrPipelineDynamicStateTest, reporter, ctxInfo) {
     GrContext* const context = ctxInfo.grContext();
-    GrResourceProvider* rp = context->resourceProvider();
+    GrResourceProvider* rp = context->contextPriv().resourceProvider();
 
     sk_sp<GrRenderTargetContext> rtc(
         context->makeDeferredRenderTargetContext(SkBackingFit::kExact, kScreenSize, kScreenSize,
@@ -193,7 +192,7 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(GrPipelineDynamicStateTest, reporter, ctxInfo
     uint32_t resultPx[kScreenSize * kScreenSize];
 
     for (ScissorState scissorState : {ScissorState::kEnabled, ScissorState::kDisabled}) {
-        rtc->clear(nullptr, 0xbaaaaaad, true);
+        rtc->clear(nullptr, 0xbaaaaaad, GrRenderTargetContext::CanClearFullscreen::kYes);
         rtc->priv().testingOnly_addDrawOp(
             skstd::make_unique<GrPipelineDynamicStateTestOp>(scissorState, vbuff));
         rtc->readPixels(SkImageInfo::Make(kScreenSize, kScreenSize,

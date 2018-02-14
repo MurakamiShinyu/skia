@@ -45,10 +45,12 @@ static AttribLayout attrib_layout(GrVertexAttribType type) {
             return {true, 1, GR_GL_UNSIGNED_BYTE};
         case kUByte4_norm_GrVertexAttribType:
             return {true, 4, GR_GL_UNSIGNED_BYTE};
-        case kUShort2_norm_GrVertexAttribType:
-            return {true, 2, GR_GL_UNSIGNED_SHORT};
+        case kShort2_GrVertexAttribType:
+            return {false, 2, GR_GL_SHORT};
         case kUShort2_GrVertexAttribType:
             return {false, 2, GR_GL_UNSIGNED_SHORT};
+        case kUShort2_norm_GrVertexAttribType:
+            return {true, 2, GR_GL_UNSIGNED_SHORT};
         case kInt_GrVertexAttribType:
             return {false, 1, GR_GL_INT};
         case kUint_GrVertexAttribType:
@@ -87,10 +89,12 @@ static bool GrVertexAttribTypeIsIntType(const GrShaderCaps* shaderCaps,
             return false;
         case kUByte4_norm_GrVertexAttribType:
             return false;
+        case kShort2_GrVertexAttribType:
+            return true;
+        case kUShort2_GrVertexAttribType:
+            return shaderCaps->integerSupport(); // FIXME: caller should handle this.
         case kUShort2_norm_GrVertexAttribType:
             return false;
-        case kUShort2_GrVertexAttribType:
-            return shaderCaps->integerSupport();
         case kInt_GrVertexAttribType:
             return true;
         case kUint_GrVertexAttribType:
@@ -145,24 +149,39 @@ void GrGLAttribArrayState::set(GrGLGpu* gpu,
     }
 }
 
-void GrGLAttribArrayState::enableVertexArrays(const GrGLGpu* gpu, int enabledCount) {
+void GrGLAttribArrayState::enableVertexArrays(const GrGLGpu* gpu, int enabledCount,
+                                              EnablePrimitiveRestart enablePrimitiveRestart) {
     SkASSERT(enabledCount <= fAttribArrayStates.count());
-    if (fEnabledCountIsValid && enabledCount == fNumEnabledArrays) {
-        return;
+
+    if (!fEnableStateIsValid || enabledCount != fNumEnabledArrays) {
+        int firstIdxToEnable = fEnableStateIsValid ? fNumEnabledArrays : 0;
+        for (int i = firstIdxToEnable; i < enabledCount; ++i) {
+            GR_GL_CALL(gpu->glInterface(), EnableVertexAttribArray(i));
+        }
+
+        int endIdxToDisable = fEnableStateIsValid ? fNumEnabledArrays : fAttribArrayStates.count();
+        for (int i = enabledCount; i < endIdxToDisable; ++i) {
+            GR_GL_CALL(gpu->glInterface(), DisableVertexAttribArray(i));
+        }
+
+        fNumEnabledArrays = enabledCount;
     }
 
-    int firstIdxToEnable = fEnabledCountIsValid ? fNumEnabledArrays : 0;
-    for (int i = firstIdxToEnable; i < enabledCount; ++i) {
-        GR_GL_CALL(gpu->glInterface(), EnableVertexAttribArray(i));
+    SkASSERT(EnablePrimitiveRestart::kNo == enablePrimitiveRestart ||
+             gpu->caps()->usePrimitiveRestart());
+
+    if (gpu->caps()->usePrimitiveRestart() &&
+        (!fEnableStateIsValid || enablePrimitiveRestart != fPrimitiveRestartEnabled)) {
+        if (EnablePrimitiveRestart::kYes == enablePrimitiveRestart) {
+            GR_GL_CALL(gpu->glInterface(), Enable(GR_GL_PRIMITIVE_RESTART_FIXED_INDEX));
+        } else {
+            GR_GL_CALL(gpu->glInterface(), Disable(GR_GL_PRIMITIVE_RESTART_FIXED_INDEX));
+        }
+
+        fPrimitiveRestartEnabled = enablePrimitiveRestart;
     }
 
-    int endIdxToDisable = fEnabledCountIsValid ? fNumEnabledArrays : fAttribArrayStates.count();
-    for (int i = enabledCount; i < endIdxToDisable; ++i) {
-        GR_GL_CALL(gpu->glInterface(), DisableVertexAttribArray(i));
-    }
-
-    fNumEnabledArrays = enabledCount;
-    fEnabledCountIsValid = true;
+    fEnableStateIsValid = true;
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////

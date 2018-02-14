@@ -7,6 +7,7 @@
 
 #include "SkCodec.h"
 #include "SkCodecPriv.h"
+#include "SkColorSpacePriv.h"
 #include "SkColorData.h"
 #include "SkData.h"
 #include "SkJpegCodec.h"
@@ -184,7 +185,7 @@ class SkRawStream {
 public:
     virtual ~SkRawStream() {}
 
-   /* 
+   /*
     * Gets the length of the stream. Depending on the type of stream, this may require reading to
     * the end of the stream.
     */
@@ -446,6 +447,12 @@ public:
      */
     static SkDngImage* NewFromStream(SkRawStream* stream) {
         std::unique_ptr<SkDngImage> dngImage(new SkDngImage(stream));
+#if defined(IS_FUZZING_WITH_LIBFUZZER)
+        // Libfuzzer easily runs out of memory after here. To avoid that
+        // We just pretend all streams are invalid. Our AFL-fuzzer
+        // should still exercise this code; it's more resistant to OOM.
+        return nullptr;
+#endif
         if (!dngImage->initFromPiex() && !dngImage->readDng()) {
             return nullptr;
         }
@@ -654,7 +661,8 @@ std::unique_ptr<SkCodec> SkRawCodec::MakeFromStream(std::unique_ptr<SkStream> st
                 colorSpace = SkColorSpace::MakeSRGB();
                 break;
             case ::piex::PreviewImageData::kAdobeRgb:
-                colorSpace = SkColorSpace_Base::MakeNamed(SkColorSpace_Base::kAdobeRGB_Named);
+                colorSpace = SkColorSpace::MakeRGB(g2Dot2_TransferFn,
+                                                   SkColorSpace::kAdobeRGB_Gamut);
                 break;
         }
 

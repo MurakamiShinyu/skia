@@ -112,10 +112,10 @@ SkColorSpaceXform_A2B::SkColorSpaceXform_A2B(SkColorSpace_A2B* srcSpace,
 #endif
     int currentChannels;
     switch (srcSpace->iccType()) {
-        case SkColorSpace_Base::kRGB_ICCTypeFlag:
+        case SkColorSpace::kRGB_Type:
             currentChannels = 3;
             break;
-        case SkColorSpace_Base::kCMYK_ICCTypeFlag: {
+        case SkColorSpace::kCMYK_Type: {
             currentChannels = 4;
             // CMYK images from JPEGs (the only format that supports it) are actually
             // inverted CMYK, so we need to invert every channel.
@@ -140,8 +140,7 @@ SkColorSpaceXform_A2B::SkColorSpaceXform_A2B(SkColorSpace_A2B* srcSpace,
                 // Take the fast path for ordinary sRGB.
                 if (3 == currentChannels && kSRGB_SkGammaNamed == e.gammaNamed()) {
                     SkCSXformPrintf("fast path from sRGB\n");
-                    // Images should always start the pipeline as unpremul
-                    fElementsPipeline.append_from_srgb(kUnpremul_SkAlphaType);
+                    fElementsPipeline.append(SkRasterPipeline::from_srgb);
                     break;
                 }
 

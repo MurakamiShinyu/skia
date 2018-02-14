@@ -241,7 +241,9 @@ public:
 private:
     struct Rec {
     public:
-        Rec() = delete;
+        constexpr Rec(uint32_t len, int32_t refCnt)
+            : fLength(len), fRefCnt(refCnt), fBeginningOfData(0)
+        { }
         static sk_sp<Rec> Make(const char text[], size_t len);
         uint32_t    fLength; // logically size_t, but we want it to stay 32bits
         mutable std::atomic<int32_t> fRefCnt;
@@ -253,6 +255,9 @@ private:
         void ref() const;
         void unref() const;
         bool unique() const;
+    private:
+        // Ensure the unsized delete is called.
+        void operator delete(void* p) { ::operator delete(p); }
     };
     sk_sp<Rec> fRec;
 
@@ -267,6 +272,9 @@ private:
 
 /// Creates a new string and writes into it using a printf()-style format.
 SkString SkStringPrintf(const char* format, ...);
+/// This makes it easier to write a caller as a VAR_ARGS function where the format string is
+/// optional.
+static inline SkString SkStringPrintf() { return SkString(); }
 
 // Specialized to take advantage of SkString's fast swap path. The unspecialized function is
 // declared in SkTypes.h and called by SkTSort.

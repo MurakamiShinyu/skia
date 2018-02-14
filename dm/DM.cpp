@@ -5,6 +5,7 @@
  * found in the LICENSE file.
  */
 
+#include "DMFontMgr.h"
 #include "DMJsonWriter.h"
 #include "DMSrcSink.h"
 #include "ProcStats.h"
@@ -18,13 +19,13 @@
 #include "SkColorSpacePriv.h"
 #include "SkCommonFlags.h"
 #include "SkCommonFlagsConfig.h"
-#include "SkCommonFlagsGpuThreads.h"
-#include "SkCommonFlagsPathRenderer.h"
+#include "SkCommonFlagsGpu.h"
 #include "SkData.h"
-#include "SkDocument.h"
 #include "SkDebugfTracer.h"
+#include "SkDocument.h"
 #include "SkEventTracingPriv.h"
 #include "SkFontMgr.h"
+#include "SkFontMgrPriv.h"
 #include "SkGraphics.h"
 #include "SkHalf.h"
 #include "SkLeanWindows.h"
@@ -38,7 +39,7 @@
 #include "SkSpinlock.h"
 #include "SkTHash.h"
 #include "SkTaskGroup.h"
-#include "SkThreadUtils.h"
+#include "SkTypeface_win.h"
 #include "Test.h"
 #include "Timer.h"
 #include "ios_utils.h"
@@ -55,7 +56,7 @@ extern void SkPDFImageDumpStats();
 
 #include <stdlib.h>
 
-#ifndef SK_BUILD_FOR_WIN32
+#ifndef SK_BUILD_FOR_WIN
     #include <unistd.h>
 #endif
 
@@ -94,13 +95,13 @@ DEFINE_bool(forceRasterPipeline, false, "sets gSkForceRasterPipelineBlitter");
 
 DEFINE_bool(ddl, false, "If true, use DeferredDisplayLists for GPU SKP rendering.");
 
-#if SK_SUPPORT_GPU
-DEFINE_pathrenderer_flag;
-#endif
-
 DEFINE_bool(ignoreSigInt, false, "ignore SIGINT signals during test execution");
 
 DEFINE_string(dont_write, "", "File extensions to skip writing to --writePath.");  // See skia:6821
+
+DEFINE_bool(nativeFonts, true, "If true, use native font manager and rendering. "
+                               "If false, fonts will draw as portably as possible.");
+DEFINE_bool(gdi, false, "On Windows, use GDI instead of DirectWrite for font rendering.");
 
 using namespace DM;
 using sk_gpu_test::GrContextFactory;
@@ -211,7 +212,7 @@ static void find_culprit() {
     }
 }
 
-#if defined(SK_BUILD_FOR_WIN32)
+#if defined(SK_BUILD_FOR_WIN)
     static LONG WINAPI crash_handler(EXCEPTION_POINTERS* e) {
         static const struct {
             const char* name;
@@ -338,7 +339,7 @@ static void gather_gold() {
 
 /*~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~*/
 
-#if defined(SK_BUILD_FOR_WIN32)
+#if defined(SK_BUILD_FOR_WIN)
     static const char* kNewline = "\r\n";
 #else
     static const char* kNewline = "\n";
@@ -726,7 +727,7 @@ static void push_codec_srcs(Path path) {
         };
         for (const char* brdExt : brdExts) {
             if (0 == strcmp(brdExt, ext)) {
-                bool gray = codec->getEncodedInfo().color() == SkEncodedInfo::kGray_Color;
+                bool gray = codec->getInfo().colorType() == kGray_8_SkColorType;
                 push_brd_srcs(path, gray);
                 break;
             }
@@ -783,6 +784,9 @@ static bool gather_srcs() {
         gather_file_srcs<SKPSrc>(FLAGS_skps, "skp");
     }
     gather_file_srcs<MSKPSrc>(FLAGS_mskps, "mskp");
+#if !defined(SK_BUILD_FOR_GOOGLE3)
+    gather_file_srcs<SkottieSrc>(FLAGS_jsons, "json");
+#endif
 #if defined(SK_XML)
     gather_file_srcs<SVGSrc>(FLAGS_svgs, "svg");
 #endif
@@ -890,9 +894,16 @@ static Sink* create_sink(const GrContextOptions& grCtxOptions, const SkCommandLi
         auto srgbColorSpace = SkColorSpace::MakeSRGB();
         auto srgbLinearColorSpace = SkColorSpace::MakeSRGBLinear();
 
+        SINK("g8",      RasterSink, kGray_8_SkColorType);
         SINK("565",     RasterSink, kRGB_565_SkColorType);
+        SINK("4444",    RasterSink, kARGB_4444_SkColorType);
         SINK("8888",    RasterSink, kN32_SkColorType);
         SINK("srgb",    RasterSink, kN32_SkColorType, srgbColorSpace);
+        SINK("rgba",    RasterSink, kRGBA_8888_SkColorType);
+        SINK("bgra",    RasterSink, kBGRA_8888_SkColorType);
+        SINK("rgbx",    RasterSink, kRGB_888x_SkColorType);
+        SINK("1010102", RasterSink, kRGBA_1010102_SkColorType);
+        SINK("101010x", RasterSink, kRGB_101010x_SkColorType);
         SINK("f16",     RasterSink, kRGBA_F16_SkColorType, srgbLinearColorSpace);
         SINK("pdf",     PDFSink, false, SK_ScalarDefaultRasterDPI);
         SINK("skp",     SKPSink);
@@ -914,19 +925,7 @@ static sk_sp<SkColorSpace> adobe_rgb() {
 }
 
 static sk_sp<SkColorSpace> rgb_to_gbr() {
-    float gbr[9];
-    gbr[0] = gSRGB_toXYZD50[1];
-    gbr[1] = gSRGB_toXYZD50[2];
-    gbr[2] = gSRGB_toXYZD50[0];
-    gbr[3] = gSRGB_toXYZD50[4];
-    gbr[4] = gSRGB_toXYZD50[5];
-    gbr[5] = gSRGB_toXYZD50[3];
-    gbr[6] = gSRGB_toXYZD50[7];
-    gbr[7] = gSRGB_toXYZD50[8];
-    gbr[8] = gSRGB_toXYZD50[6];
-    SkMatrix44 toXYZD50(SkMatrix44::kUninitialized_Constructor);
-    toXYZD50.set3x3RowMajorf(gbr);
-    return SkColorSpace::MakeRGB(SkColorSpace::kSRGB_RenderTargetGamma, toXYZD50);
+    return SkColorSpace::MakeSRGB()->makeColorSpin();
 }
 
 static Sink* create_via(const SkString& tag, Sink* wrapped) {
@@ -935,15 +934,11 @@ static Sink* create_via(const SkString& tag, Sink* wrapped) {
     VIA("gbr",       ViaCSXform,           wrapped, rgb_to_gbr(), true);
     VIA("lite",      ViaLite,              wrapped);
     VIA("pipe",      ViaPipe,              wrapped);
-    VIA("twice",     ViaTwice,             wrapped);
 #ifdef TEST_VIA_SVG
     VIA("svg",       ViaSVG,               wrapped);
 #endif
     VIA("serialize", ViaSerialization,     wrapped);
     VIA("pic",       ViaPicture,           wrapped);
-    VIA("2ndpic",    ViaSecondPicture,     wrapped);
-    VIA("sp",        ViaSingletonPictures, wrapped);
-    VIA("defer",     ViaDefer,             wrapped);
     VIA("tiles",     ViaTiles, 256, 256, nullptr,            wrapped);
     VIA("tiles_rt",  ViaTiles, 256, 256, new SkRTreeFactory, wrapped);
 
@@ -1282,9 +1277,11 @@ static void run_test(skiatest::Test test, const GrContextOptions& grCtxOptions) 
     } reporter;
 
     if (!FLAGS_dryRun && !is_blacklisted("_", "tests", "_", test.name)) {
+        GrContextOptions options = grCtxOptions;
+        test.modifyGrContextOptions(&options);
+
         start("unit", "test", "", test.name);
-        GrContextFactory factory(grCtxOptions);
-        test.run(&reporter, &factory);
+        test.run(&reporter, options);
     }
     done("unit", "test", "", test.name);
 }
@@ -1308,9 +1305,19 @@ extern sk_sp<SkTypeface> (*gCreateTypefaceDelegate)(const char [], SkFontStyle )
 int main(int argc, char** argv) {
     SkCommandLineFlags::Parse(argc, argv);
 
+    if (!FLAGS_nativeFonts) {
+        gSkFontMgr_DefaultFactory = &DM::MakeFontMgr;
+    }
+
+#if defined(SK_BUILD_FOR_WIN)
+    if (FLAGS_gdi) {
+        gSkFontMgr_DefaultFactory = &SkFontMgr_New_GDI;
+    }
+#endif
+
     initializeEventTracingForTools();
 
-#if !defined(GOOGLE3) && defined(SK_BUILD_FOR_IOS)
+#if !defined(SK_BUILD_FOR_GOOGLE3) && defined(SK_BUILD_FOR_IOS)
     cd_Documents();
 #endif
     setbuf(stdout, nullptr);
@@ -1340,8 +1347,7 @@ int main(int argc, char** argv) {
 
     GrContextOptions grCtxOptions;
 #if SK_SUPPORT_GPU
-    grCtxOptions.fGpuPathRenderers = CollectGpuPathRenderersFromFlags();
-    grCtxOptions.fExecutor = GpuExecutorForTools();
+    SetCtxOptionsFromCommonFlags(&grCtxOptions);
 #endif
 
     JsonWriter::DumpJson();  // It's handy for the bots to assume this is ~never missing.
@@ -1349,12 +1355,8 @@ int main(int argc, char** argv) {
     SkTaskGroup::Enabler enabled(FLAGS_threads);
     gCreateTypefaceDelegate = &create_from_name;
 
-    {
-        SkString testResourcePath = GetResourcePath("color_wheel.png");
-        SkFILEStream testResource(testResourcePath.c_str());
-        if (!testResource.isValid()) {
-            info("Some resources are missing.  Do you need to set --resourcePath?\n");
-        }
+    if (nullptr == GetResourceAsData("images/color_wheel.png")) {
+        info("Some resources are missing.  Do you need to set --resourcePath?\n");
     }
     gather_gold();
     gather_uninteresting_hashes();
@@ -1438,68 +1440,3 @@ int main(int argc, char** argv) {
 
     return 0;
 }
-
-// TODO: currently many GPU tests are declared outside SK_SUPPORT_GPU guards.
-// Thus we export the empty RunWithGPUTestContexts when SK_SUPPORT_GPU=0.
-namespace skiatest {
-
-#if SK_SUPPORT_GPU
-bool IsGLContextType(sk_gpu_test::GrContextFactory::ContextType type) {
-    return kOpenGL_GrBackend == GrContextFactory::ContextTypeBackend(type);
-}
-bool IsVulkanContextType(sk_gpu_test::GrContextFactory::ContextType type) {
-    return kVulkan_GrBackend == GrContextFactory::ContextTypeBackend(type);
-}
-bool IsRenderingGLContextType(sk_gpu_test::GrContextFactory::ContextType type) {
-    return IsGLContextType(type) && GrContextFactory::IsRenderingContext(type);
-}
-bool IsNullGLContextType(sk_gpu_test::GrContextFactory::ContextType type) {
-    return type == GrContextFactory::kNullGL_ContextType;
-}
-#else
-bool IsGLContextType(int) { return false; }
-bool IsVulkanContextType(int) { return false; }
-bool IsRenderingGLContextType(int) { return false; }
-bool IsNullGLContextType(int) { return false; }
-#endif
-
-void RunWithGPUTestContexts(GrContextTestFn* test, GrContextTypeFilterFn* contextTypeFilter,
-                            Reporter* reporter, GrContextFactory* factory) {
-#if SK_SUPPORT_GPU
-
-#if defined(SK_BUILD_FOR_UNIX) || defined(SK_BUILD_FOR_WIN) || defined(SK_BUILD_FOR_MAC)
-    static constexpr auto kNativeGLType = GrContextFactory::kGL_ContextType;
-#else
-    static constexpr auto kNativeGLType = GrContextFactory::kGLES_ContextType;
-#endif
-
-    for (int typeInt = 0; typeInt < GrContextFactory::kContextTypeCnt; ++typeInt) {
-        GrContextFactory::ContextType contextType = (GrContextFactory::ContextType) typeInt;
-        // Use "native" instead of explicitly trying OpenGL and OpenGL ES. Do not use GLES on
-        // desktop since tests do not account for not fixing http://skbug.com/2809
-        if (contextType == GrContextFactory::kGL_ContextType ||
-            contextType == GrContextFactory::kGLES_ContextType) {
-            if (contextType != kNativeGLType) {
-                continue;
-            }
-        }
-        ContextInfo ctxInfo = factory->getContextInfo(contextType,
-                                                  GrContextFactory::ContextOverrides::kDisableNVPR);
-        if (contextTypeFilter && !(*contextTypeFilter)(contextType)) {
-            continue;
-        }
-        ReporterContext ctx(reporter, SkString(GrContextFactory::ContextTypeName(contextType)));
-        if (ctxInfo.grContext()) {
-            (*test)(reporter, ctxInfo);
-            ctxInfo.grContext()->flush();
-        }
-        ctxInfo = factory->getContextInfo(contextType,
-                                          GrContextFactory::ContextOverrides::kRequireNVPRSupport);
-        if (ctxInfo.grContext()) {
-            (*test)(reporter, ctxInfo);
-            ctxInfo.grContext()->flush();
-        }
-    }
-#endif
-}
-} // namespace skiatest

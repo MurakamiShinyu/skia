@@ -55,13 +55,13 @@ sk_sp<SkShader> SkColorFilterShader::onMakeColorSpace(SkColorSpaceXformer* xform
 /////////////////////////////////////////////////////////////////////
 
 std::unique_ptr<GrFragmentProcessor> SkColorFilterShader::asFragmentProcessor(
-        const AsFPArgs& args) const {
+        const GrFPArgs& args) const {
     auto fp1 = as_SB(fShader)->asFragmentProcessor(args);
     if (!fp1) {
         return nullptr;
     }
 
-    auto fp2 = fFilter->asFragmentProcessor(args.fContext, args.fDstColorSpace);
+    auto fp2 = fFilter->asFragmentProcessor(args.fContext, *args.fDstColorSpaceInfo);
     if (!fp2) {
         return fp1;
     }

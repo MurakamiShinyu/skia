@@ -121,7 +121,7 @@ void GrMtlCaps::initGrCaps(const id<MTLDevice> device) {
     fMaxTextureSize = fMaxRenderTargetSize;
 
     // Init sample counts. All devices support 1 (i.e. 0 in skia).
-    fSampleCounts.push(0);
+    fSampleCounts.push(1);
     for (auto sampleCnt : {2, 4, 8}) {
         if ([device supportsTextureSampleCount:sampleCnt]) {
             fSampleCounts.push(sampleCnt);
@@ -160,27 +160,33 @@ void GrMtlCaps::initGrCaps(const id<MTLDevice> device) {
     fUsesMixedSamples = false;
     fGpuTracingSupport = false;
 
-    fUseDrawInsteadOfClear = false;
     fFenceSyncSupport = true;   // always available in Metal
     fCrossContextTextureSupport = false;
-
-    fMaxColorSampleCount = 4; // minimum required by spec
-    fMaxStencilSampleCount = 4; // minimum required by spec
 }
 
-int GrMtlCaps::getSampleCount(int requestedCount, GrPixelConfig config) const {
-    int count = fSampleCounts.count();
-    SkASSERT(count > 0); // We always add 0 as a valid sample count
-    if (!this->isConfigRenderable(config, true)) {
-        return 0;
-    }
 
-    for (int i = 0; i < count; ++i) {
-        if (fSampleCounts[i] >= requestedCount) {
-            return fSampleCounts[i];
-        }
+int GrMtlCaps::maxRenderTargetSampleCount(GrPixelConfig config) const {
+    if (fConfigTable[config].fFlags & ConfigInfo::kMSAA_Flag) {
+        return fSampleCounts[fSampleCounts.count() - 1];
+    } else if (fConfigTable[config].fFlags & ConfigInfo::kRenderable_Flag) {
+        return 1;
     }
-    return fSampleCounts[count-1];
+    return 0;
+}
+
+int GrMtlCaps::getRenderTargetSampleCount(int requestedCount, GrPixelConfig config) const {
+    requestedCount = SkTMax(requestedCount, 1);
+    if (fConfigTable[config].fFlags & ConfigInfo::kMSAA_Flag) {
+        int count = fSampleCounts.count();
+        for (int i = 0; i < count; ++i) {
+            if (fSampleCounts[i] >= requestedCount) {
+                return fSampleCounts[i];
+            }
+        }
+    } else if (fConfigTable[config].fFlags & ConfigInfo::kRenderable_Flag) {
+        return 1 == requestedCount ? 1 : 0;
+    }
+    return 0;
 }
 
 void GrMtlCaps::initShaderCaps() {
@@ -230,21 +236,10 @@ void GrMtlCaps::initShaderCaps() {
     shaderCaps->fTexelFetchSupport = false;
     shaderCaps->fVertexIDSupport = false;
     shaderCaps->fImageLoadStoreSupport = false;
-    shaderCaps->fShaderPrecisionVaries = false; // ???
 
-    // Metal uses IEEE float and half floats so using those values here.
-    for (int s = 0; s < kGrShaderTypeCount; ++s) {
-        auto& highp = shaderCaps->fFloatPrecisions[s][kHigh_GrSLPrecision];
-        highp.fLogRangeLow = highp.fLogRangeHigh = 127;
-        highp.fBits = 23;
-
-        auto& mediump = shaderCaps->fFloatPrecisions[s][kMedium_GrSLPrecision];
-        mediump.fLogRangeLow = mediump.fLogRangeHigh = 15;
-        mediump.fBits = 10;
-
-        shaderCaps->fFloatPrecisions[s][kLow_GrSLPrecision] = mediump;
-    }
-    shaderCaps->initSamplerPrecisionTable();
+    // Metal uses IEEE float and half floats so assuming those values here.
+    shaderCaps->fFloatIs32Bits = true;
+    shaderCaps->fHalfIs32Bits = false;
 
     shaderCaps->fMaxVertexSamplers =
     shaderCaps->fMaxFragmentSamplers = 16;
@@ -293,10 +288,6 @@ void GrMtlCaps::initConfigTable() {
     // SBGRA_8888 uses BGRA8Unorm_sRGB
     info = &fConfigTable[kSBGRA_8888_GrPixelConfig];
     info->fFlags = ConfigInfo::kAllFlags;
-
-    // RGBA_8888_sint uses RGBA8Sint
-    info = &fConfigTable[kRGBA_8888_sint_GrPixelConfig];
-    info->fFlags = ConfigInfo::kMSAA_Flag;
 
     // RGBA_float uses RGBA32Float
     info = &fConfigTable[kRGBA_float_GrPixelConfig];

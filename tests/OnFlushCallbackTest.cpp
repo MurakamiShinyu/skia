@@ -14,9 +14,12 @@
 #include "GrContextPriv.h"
 #include "GrDefaultGeoProcFactory.h"
 #include "GrOnFlushResourceProvider.h"
+#include "GrProxyProvider.h"
 #include "GrRenderTargetContextPriv.h"
 #include "GrResourceProvider.h"
 #include "GrQuad.h"
+#include "SkBitmap.h"
+#include "SkPointPriv.h"
 #include "effects/GrSimpleTextureEffect.h"
 #include "ops/GrSimpleMeshDrawOpHelper.h"
 
@@ -128,13 +131,14 @@ private:
         indices[0] = 0;
         indices[1] = 1;
         indices[2] = 2;
-        indices[3] = 0;
-        indices[4] = 2;
+        indices[3] = 2;
+        indices[4] = 1;
         indices[5] = 3;
 
         // Setup positions
         SkPoint* position = (SkPoint*) vertices;
-        position->setRectFan(fRect.fLeft, fRect.fTop, fRect.fRight, fRect.fBottom, vertexStride);
+        SkPointPriv::SetRectTriStrip(position, fRect.fLeft, fRect.fTop, fRect.fRight, fRect.fBottom,
+                                  vertexStride);
 
         // Setup vertex colors
         GrColor* color = (GrColor*)((intptr_t)vertices + kColorOffset);
@@ -165,16 +169,6 @@ private:
 };
 
 }  // anonymous namespace
-
-#ifdef SK_DEBUG
-#include "SkImageEncoder.h"
-#include "sk_tool_utils.h"
-
-static void save_bm(const SkBitmap& bm, const char name[]) {
-    bool result = sk_tool_utils::EncodeImageToFile(name, bm, SkEncodedImageFormat::kPNG, 100);
-    SkASSERT(result);
-}
-#endif
 
 static constexpr SkRect kEmptyRect = SkRect::MakeEmpty();
 
@@ -294,23 +288,6 @@ public:
         fAtlasDest = atlasDest;
     }
 
-    void saveRTC(sk_sp<GrRenderTargetContext> rtc) {
-        SkASSERT(!fRTC);
-        fRTC = rtc;
-    }
-
-#ifdef SK_DEBUG
-    void saveAtlasToDisk() {
-        SkBitmap readBack;
-        readBack.allocN32Pixels(fRTC->width(), fRTC->height());
-
-        bool result = fRTC->readPixels(readBack.info(),
-                                       readBack.getPixels(), readBack.rowBytes(), 0, 0);
-        SkASSERT(result);
-        save_bm(readBack, "atlas-real.png");
-    }
-#endif
-
     /*
      * This callback back creates the atlas and updates the AtlasedRectOps to read from it
      */
@@ -354,7 +331,8 @@ public:
                                                                            nullptr, nullptr);
 #endif
 
-        rtc->clear(nullptr, 0xFFFFFFFF, true); // clear the atlas
+        // clear the atlas
+        rtc->clear(nullptr, 0xFFFFFFFF, GrRenderTargetContext::CanClearFullscreen::kYes);
 
         int blocksInAtlas = 0;
         for (int i = 0; i < lists.count(); ++i) {
@@ -364,7 +342,7 @@ public:
 
                 // For now, we avoid the resource buffer issues and just use clears
 #if 1
-                rtc->clear(&r, op->color(), false);
+                rtc->clear(&r, op->color(), GrRenderTargetContext::CanClearFullscreen::kNo);
 #else
                 GrPaint paint;
                 paint.setColor4f(GrColor4f::FromGrColor(op->color()));
@@ -388,9 +366,6 @@ public:
             // We've updated all these ops and we certainly don't want to process them again
             this->clearOpsFor(lists[i]);
         }
-
-        // Hide a ref to the RTC in AtlasData so we can check on it later
-        this->saveRTC(rtc);
 
         results->push_back(std::move(rtc));
     }
@@ -420,9 +395,6 @@ private:
     // Each opList containing AtlasedRectOps gets its own internal singly-linked list
     SkTDArray<LinkedListHeader>  fOps;
 
-    // The RTC used to create the atlas
-    sk_sp<GrRenderTargetContext> fRTC;
-
     // For the time being we need to pre-allocate the atlas bc the TextureSamplers require
     // a GrTexture
     sk_sp<GrTextureProxy>        fAtlasDest;
@@ -441,14 +413,13 @@ static sk_sp<GrTextureProxy> make_upstream_image(GrContext* context, AtlasObject
                                                                       kRGBA_8888_GrPixelConfig,
                                                                       nullptr));
 
-    rtc->clear(nullptr, GrColorPackRGBA(255, 0, 0, 255), true);
+    rtc->clear(nullptr, GrColorPackRGBA(255, 0, 0, 255),
+               GrRenderTargetContext::CanClearFullscreen::kYes);
 
     for (int i = 0; i < 3; ++i) {
         SkRect r = SkRect::MakeXYWH(i*kDrawnTileSize, 0, kDrawnTileSize, kDrawnTileSize);
 
-        // TODO: here is the blocker for deferring creation of the atlas. The TextureSamplers
-        // created here currently require a hard GrTexture.
-        auto fp = GrSimpleTextureEffect::Make(fakeAtlas, nullptr, SkMatrix::I());
+        auto fp = GrSimpleTextureEffect::Make(fakeAtlas, SkMatrix::I());
         GrPaint paint;
         paint.addColorFragmentProcessor(std::move(fp));
         paint.setPorterDuffXPFactory(SkBlendMode::kSrc);
@@ -467,7 +438,14 @@ static sk_sp<GrTextureProxy> make_upstream_image(GrContext* context, AtlasObject
 // Enable this if you want to debug the final draws w/o having the atlasCallback create the
 // atlas
 #if 0
+#include "SkImageEncoder.h"
 #include "SkGrPriv.h"
+#include "sk_tool_utils.h"
+
+static void save_bm(const SkBitmap& bm, const char name[]) {
+    bool result = sk_tool_utils::EncodeImageToFile(name, bm, SkEncodedImageFormat::kPNG, 100);
+    SkASSERT(result);
+}
 
 sk_sp<GrTextureProxy> pre_create_atlas(GrContext* context) {
     SkBitmap bm;
@@ -498,19 +476,16 @@ sk_sp<GrTextureProxy> pre_create_atlas(GrContext* context) {
 }
 #else
 // TODO: this is unfortunate and must be removed. We want the atlas to be created later.
-sk_sp<GrTextureProxy> pre_create_atlas(GrContext* context) {
+sk_sp<GrTextureProxy> pre_create_atlas(GrProxyProvider* proxyProvider) {
     GrSurfaceDesc desc;
     desc.fFlags = kRenderTarget_GrSurfaceFlag;
     desc.fOrigin = kBottomLeft_GrSurfaceOrigin;
     desc.fWidth = 32;
     desc.fHeight = 16;
     desc.fConfig = kSkia8888_GrPixelConfig;
-    sk_sp<GrSurfaceProxy> atlasDest = GrSurfaceProxy::MakeDeferred(
-                                                            context->resourceProvider(),
-                                                            desc, SkBackingFit::kExact,
-                                                            SkBudgeted::kYes,
-                                                            GrResourceProvider::kNoPendingIO_Flag);
-    return sk_ref_sp(atlasDest->asTextureProxy());
+
+    return proxyProvider->createProxy(desc, SkBackingFit::kExact, SkBudgeted::kYes,
+                                      GrResourceProvider::kNoPendingIO_Flag);
 }
 #endif
 
@@ -542,16 +517,11 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(OnFlushCallbackTest, reporter, ctxInfo) {
 
     GrContext* context = ctxInfo.grContext();
 
-    if (context->caps()->useDrawInsteadOfClear()) {
-        // TODO: fix the buffer issues so this can run on all devices
-        return;
-    }
-
     AtlasObject object;
 
     // For now (until we add a GrSuperDeferredSimpleTextureEffect), we create the final atlas
     // proxy ahead of time.
-    sk_sp<GrTextureProxy> atlasDest = pre_create_atlas(context);
+    sk_sp<GrTextureProxy> atlasDest = pre_create_atlas(context->contextPriv().proxyProvider());
 
     object.setAtlasDest(atlasDest);
 
@@ -572,7 +542,7 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(OnFlushCallbackTest, reporter, ctxInfo) {
                                                                       kRGBA_8888_GrPixelConfig,
                                                                       nullptr));
 
-    rtc->clear(nullptr, 0xFFFFFFFF, true);
+    rtc->clear(nullptr, 0xFFFFFFFF, GrRenderTargetContext::CanClearFullscreen::kYes);
 
     // Note that this doesn't include the third texture proxy
     for (int i = 0; i < kNumProxies-1; ++i) {
@@ -581,7 +551,7 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(OnFlushCallbackTest, reporter, ctxInfo) {
         SkMatrix t = SkMatrix::MakeTrans(-i*3*kDrawnTileSize, 0);
 
         GrPaint paint;
-        auto fp = GrSimpleTextureEffect::Make(std::move(proxies[i]), nullptr, t);
+        auto fp = GrSimpleTextureEffect::Make(std::move(proxies[i]), t);
         paint.setPorterDuffXPFactory(SkBlendMode::kSrc);
         paint.addColorFragmentProcessor(std::move(fp));
 
@@ -600,11 +570,6 @@ DEF_GPUTEST_FOR_GL_RENDERING_CONTEXTS(OnFlushCallbackTest, reporter, ctxInfo) {
     context->contextPriv().testingOnly_flushAndRemoveOnFlushCallbackObject(&object);
 
     object.markAsDone();
-
-#if 0
-    save_bm(readBack, "atlas-final-image.png");
-    data.saveAtlasToDisk();
-#endif
 
     int x = kDrawnTileSize/2;
     test_color(reporter, readBack, x, SK_ColorRED);

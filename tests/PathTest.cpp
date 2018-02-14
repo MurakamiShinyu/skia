@@ -987,13 +987,13 @@ static void test_poly(skiatest::Reporter* reporter, const SkPath& path,
                 srcPts++;
                 break;
             case SkPath::kQuad_Verb:
-                REPORTER_ASSERT_MESSAGE(reporter, false, "unexpected quad verb");
+                REPORTER_ASSERT(reporter, false, "unexpected quad verb");
                 break;
             case SkPath::kConic_Verb:
-                REPORTER_ASSERT_MESSAGE(reporter, false, "unexpected conic verb");
+                REPORTER_ASSERT(reporter, false, "unexpected conic verb");
                 break;
             case SkPath::kCubic_Verb:
-                REPORTER_ASSERT_MESSAGE(reporter, false, "unexpected cubic verb");
+                REPORTER_ASSERT(reporter, false, "unexpected cubic verb");
                 break;
             case SkPath::kClose_Verb:
                 REPORTER_ASSERT(reporter, !firstTime);
@@ -2529,11 +2529,17 @@ static void write_and_read_back(skiatest::Reporter* reporter,
 static void test_corrupt_flattening(skiatest::Reporter* reporter) {
     SkPath path;
     path.moveTo(1, 2);
-    path.lineTo(1, 2);
-    path.quadTo(1, 2, 3, 4);
-    path.conicTo(1, 2, 3, 4, 0.5f);
-    path.cubicTo(1, 2, 3, 4, 5, 6);
+    path.lineTo(3, 2);
+    path.quadTo(4, 2, 5, 4);
+    path.conicTo(5, 6, 3, 7, 0.5f);
+    path.cubicTo(2, 6, 2, 4, 4, 1);
     uint8_t buffer[1024];
+
+    // Make sure these properties are computed prior to serialization.
+    SkPathPriv::FirstDirection dir;
+    SkAssertResult(SkPathPriv::CheapComputeFirstDirection(path, &dir));
+    bool isConvex = path.isConvex();
+
     SkDEBUGCODE(size_t size =) path.writeToMemory(buffer);
     SkASSERT(size <= sizeof(buffer));
 
@@ -2587,6 +2593,31 @@ static void test_corrupt_flattening(skiatest::Reporter* reporter) {
     verbs[1] = 17;
     REPORTER_ASSERT(reporter, !path.readFromMemory(buffer, sizeof(buffer)));
     verbs[1] = save;
+
+    // kConvexity_SerializationShift defined privately in SkPath.h
+    static constexpr int32_t kConvexityMask = 0x7 << 16;
+    int32_t* packed = (int32_t*)buffer;
+    int32_t savedPacked = *packed;
+    SkPath::Convexity wrongConvexity =
+            isConvex ? SkPath::kConcave_Convexity : SkPath::kConvex_Convexity;
+    *packed = (savedPacked & ~kConvexityMask) | (wrongConvexity << 16);
+    REPORTER_ASSERT(reporter, path.readFromMemory(buffer, sizeof(buffer)));
+    // We should ignore the stored convexity and recompute from the deserialized data.
+    REPORTER_ASSERT(reporter, path.isConvex() == isConvex);
+    *packed = savedPacked;
+
+    // kDirection_SerializationShift defined privately in SkPath.h
+    static constexpr int32_t kDirectionMask = 0x3 << 26;
+    SkPathPriv::FirstDirection wrongDir = (dir == SkPathPriv::kCW_FirstDirection)
+                                                  ? SkPathPriv::kCCW_FirstDirection
+                                                  : SkPathPriv::kCW_FirstDirection;
+    *packed = (savedPacked & ~kDirectionMask) | (wrongDir << 26);
+    REPORTER_ASSERT(reporter, path.readFromMemory(buffer, sizeof(buffer)));
+    // We should ignore the stored direction and recompute from the deserialized data.
+    SkPathPriv::FirstDirection newDir;
+    SkAssertResult(SkPathPriv::CheapComputeFirstDirection(path, &newDir));
+    REPORTER_ASSERT(reporter, newDir == dir);
+    *packed = savedPacked;
 }
 
 static void test_flattening(skiatest::Reporter* reporter) {
@@ -3631,7 +3662,10 @@ static void test_rrect(skiatest::Reporter* reporter) {
     SkRect emptyR = {10, 20, 10, 30};
     rr.setRectRadii(emptyR, radii);
     p.addRRect(rr);
-    REPORTER_ASSERT(reporter, p.isEmpty());
+    // The round rect is "empty" in that it has no fill area. However,
+    // the path isn't "empty" in that it should have verbs and points.
+    REPORTER_ASSERT(reporter, !p.isEmpty());
+    p.reset();
     SkRect largeR = {0, 0, SK_ScalarMax, SK_ScalarMax};
     rr.setRectRadii(largeR, radii);
     p.addRRect(rr);
@@ -4884,3 +4918,101 @@ DEF_TEST(NonFinitePathIteration, reporter) {
 
     REPORTER_ASSERT(reporter, verbs == 0);
 }
+
+
+#ifndef SK_SUPPORT_LEGACY_SVG_ARC_TO
+DEF_TEST(AndroidArc, reporter) {
+    const char* tests[] = {
+        "M50,0A50,50,0,0 1 100,50 L100,85 A15,15,0,0 1 85,100 L50,100 A50,50,0,0 1 50,0z",
+        "M50,0L92,0 A8,8,0,0 1 100,8 L100,92 A8,8,0,0 1 92,100 L8,100"
+            " A8,8,0,0 1 0,92 L 0,8 A8,8,0,0 1 8,0z",
+        "M50 0A50 50,0,1,1,50 100A50 50,0,1,1,50 0"
+    };
+    for (auto test : tests) {
+        SkPath aPath;
+        SkAssertResult(SkParsePath::FromSVGString(test, &aPath));
+        SkASSERT(aPath.isConvex());
+        for (SkScalar scale = 1; scale < 1000; scale *= 1.1f) {
+            SkPath scalePath = aPath;
+            SkMatrix matrix;
+            matrix.setScale(scale, scale);
+            scalePath.transform(matrix);
+            SkASSERT(scalePath.isConvex());
+        }
+        for (SkScalar scale = 1; scale < .001; scale /= 1.1f) {
+            SkPath scalePath = aPath;
+            SkMatrix matrix;
+            matrix.setScale(scale, scale);
+            scalePath.transform(matrix);
+            SkASSERT(scalePath.isConvex());
+        }
+    }
+}
+#endif
+
+/*
+ *  Try a range of crazy values, just to ensure that we don't assert/crash.
+ */
+DEF_TEST(HugeGeometry, reporter) {
+    auto surf = SkSurface::MakeRasterN32Premul(100, 100);
+    auto canvas = surf->getCanvas();
+
+    const bool aas[] = { false, true };
+    const SkPaint::Style styles[] = {
+        SkPaint::kFill_Style, SkPaint::kStroke_Style, SkPaint::kStrokeAndFill_Style
+    };
+    const SkScalar values[] = {
+        0, 1, 1000, 1000 * 1000, 1000.f * 1000 * 10000, SK_ScalarMax / 2, SK_ScalarMax,
+        SK_ScalarInfinity
+    };
+
+    SkPaint paint;
+    for (auto x : values) {
+        SkRect r = { -x, -x, x, x };
+        for (auto width : values) {
+            paint.setStrokeWidth(width);
+            for (auto aa : aas) {
+                paint.setAntiAlias(aa);
+                for (auto style : styles) {
+                    paint.setStyle(style);
+                    canvas->drawRect(r, paint);
+                    canvas->drawOval(r, paint);
+                }
+            }
+        }
+    }
+
+}
+
+// Treat nonfinite paths as "empty" or "full", depending on inverse-filltype
+DEF_TEST(ClipPath_nonfinite, reporter) {
+    auto surf = SkSurface::MakeRasterN32Premul(10, 10);
+    SkCanvas* canvas = surf->getCanvas();
+
+    REPORTER_ASSERT(reporter, !canvas->isClipEmpty());
+    for (bool aa : {false, true}) {
+        for (SkPath::FillType ft : {SkPath::kWinding_FillType, SkPath::kInverseWinding_FillType}) {
+            for (SkScalar bad : {SK_ScalarInfinity, SK_ScalarNaN}) {
+                for (int bits = 1; bits <= 15; ++bits) {
+                    SkPoint p0 = { 0, 0 };
+                    SkPoint p1 = { 0, 0 };
+                    if (bits & 1) p0.fX = -bad;
+                    if (bits & 2) p0.fY = -bad;
+                    if (bits & 4) p1.fX = bad;
+                    if (bits & 8) p1.fY = bad;
+
+                    SkPath path;
+                    path.moveTo(p0);
+                    path.lineTo(p1);
+                    path.setFillType(ft);
+                    canvas->save();
+                    canvas->clipPath(path, aa);
+                    REPORTER_ASSERT(reporter, canvas->isClipEmpty() == !path.isInverseFillType());
+                    canvas->restore();
+                }
+            }
+        }
+    }
+    REPORTER_ASSERT(reporter, !canvas->isClipEmpty());
+}
+

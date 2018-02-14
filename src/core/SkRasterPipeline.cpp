@@ -9,6 +9,7 @@
 #include "SkPM4f.h"
 #include "SkPM4fPriv.h"
 #include "../jumper/SkJumper.h"
+#include <algorithm>
 
 SkRasterPipeline::SkRasterPipeline(SkArenaAlloc* alloc) : fAlloc(alloc) {
     this->reset();
@@ -17,12 +18,11 @@ void SkRasterPipeline::reset() {
     fStages      = nullptr;
     fNumStages   = 0;
     fSlotsNeeded = 1;  // We always need one extra slot for just_return().
-    fClamped     = true;
 }
 
 void SkRasterPipeline::append(StockStage stage, void* ctx) {
-    SkASSERT(stage != from_srgb);      // Please use append_from_srgb().
     SkASSERT(stage != uniform_color);  // Please use append_constant_color().
+    SkASSERT(stage != seed_shader);    // Please use append_seed_shader().
     this->unchecked_append(stage, ctx);
 }
 void SkRasterPipeline::unchecked_append(StockStage stage, void* ctx) {
@@ -50,11 +50,11 @@ void SkRasterPipeline::extend(const SkRasterPipeline& src) {
     fStages = &stages[src.fNumStages - 1];
     fNumStages   += src.fNumStages;
     fSlotsNeeded += src.fSlotsNeeded - 1;  // Don't double count just_returns().
-    fClamped = fClamped && src.fClamped;
 }
 
 void SkRasterPipeline::dump() const {
-    SkDebugf("SkRasterPipeline, %d stages (in reverse)\n", fNumStages);
+    SkDebugf("SkRasterPipeline, %d stages\n", fNumStages);
+    std::vector<const char*> stages;
     for (auto st = fStages; st; st = st->prev) {
         const char* name = "";
         switch (st->stage) {
@@ -62,6 +62,10 @@ void SkRasterPipeline::dump() const {
             SK_RASTER_PIPELINE_STAGES(M)
         #undef M
         }
+        stages.push_back(name);
+    }
+    std::reverse(stages.begin(), stages.end());
+    for (const char* name : stages) {
         SkDebugf("\t%s\n", name);
     }
     SkDebugf("\n");
@@ -118,28 +122,6 @@ void SkRasterPipeline::append_constant_color(SkArenaAlloc* alloc, const float rg
 #undef INC_WHITE
 #undef INC_COLOR
 
-// It's pretty easy to start with sound premultiplied linear floats, pack those
-// to sRGB encoded bytes, then read them back to linear floats and find them not
-// quite premultiplied, with a color channel just a smidge greater than the alpha
-// channel.  This can happen basically any time we have different transfer
-// functions for alpha and colors... sRGB being the only one we draw into.
-
-// This is an annoying problem with no known good solution.  So apply the clamp hammer.
-
-void SkRasterPipeline::append_from_srgb(SkAlphaType at) {
-    this->unchecked_append(from_srgb, nullptr);
-    if (at == kPremul_SkAlphaType) {
-        this->append(SkRasterPipeline::clamp_a);
-    }
-}
-
-void SkRasterPipeline::append_from_srgb_dst(SkAlphaType at) {
-    this->unchecked_append(from_srgb_dst, nullptr);
-    if (at == kPremul_SkAlphaType) {
-        this->append(SkRasterPipeline::clamp_a_dst);
-    }
-}
-
 //static int gCounts[5] = { 0, 0, 0, 0, 0 };
 
 void SkRasterPipeline::append_matrix(SkArenaAlloc* alloc, const SkMatrix& matrix) {
@@ -165,10 +147,10 @@ void SkRasterPipeline::append_matrix(SkArenaAlloc* alloc, const SkMatrix& matrix
     } else if ((mt | (SkMatrix::kScale_Mask | SkMatrix::kTranslate_Mask)) ==
                      (SkMatrix::kScale_Mask | SkMatrix::kTranslate_Mask)) {
         float* scaleTrans = alloc->makeArrayDefault<float>(4);
-        scaleTrans[0] = matrix.getTranslateX();
-        scaleTrans[1] = matrix.getTranslateY();
-        scaleTrans[2] = matrix.getScaleX();
-        scaleTrans[3] = matrix.getScaleY();
+        scaleTrans[0] = matrix.getScaleX();
+        scaleTrans[1] = matrix.getScaleY();
+        scaleTrans[2] = matrix.getTranslateX();
+        scaleTrans[3] = matrix.getTranslateY();
         this->append(SkRasterPipeline::matrix_scale_translate, scaleTrans);
     } else {
         float* storage = alloc->makeArrayDefault<float>(9);
@@ -182,11 +164,10 @@ void SkRasterPipeline::append_matrix(SkArenaAlloc* alloc, const SkMatrix& matrix
     }
 }
 
-void SkRasterPipeline::clamp_if_unclamped(SkAlphaType alphaType) {
-    if (!fClamped) {
-        this->append(SkRasterPipeline::clamp_0);
-        this->append(alphaType == kPremul_SkAlphaType ? SkRasterPipeline::clamp_a
-                                                      : SkRasterPipeline::clamp_1);
-        fClamped = true;
-    }
+void SkRasterPipeline::append_seed_shader() {
+    static const float iota[] = {
+        0.5f, 1.5f, 2.5f, 3.5f, 4.5f, 5.5f, 6.5f, 7.5f,
+        8.5f, 9.5f,10.5f,11.5f,12.5f,13.5f,14.5f,15.5f,
+    };
+    this->unchecked_append(SkRasterPipeline::seed_shader, const_cast<float*>(iota));
 }

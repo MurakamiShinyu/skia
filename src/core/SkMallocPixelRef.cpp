@@ -8,7 +8,26 @@
 #include "SkMallocPixelRef.h"
 #include "SkBitmap.h"
 #include "SkReadBuffer.h"
+#include "SkSafeMath.h"
 #include "SkWriteBuffer.h"
+
+void* sk_calloc_throw(size_t count, size_t elemSize) {
+    return sk_calloc_throw(SkSafeMath::Mul(count, elemSize));
+}
+
+void* sk_malloc_throw(size_t count, size_t elemSize) {
+    return sk_malloc_throw(SkSafeMath::Mul(count, elemSize));
+}
+
+void* sk_realloc_throw(void* buffer, size_t count, size_t elemSize) {
+    return sk_realloc_throw(buffer, SkSafeMath::Mul(count, elemSize));
+}
+
+void* sk_malloc_canfail(size_t count, size_t elemSize) {
+    return sk_malloc_canfail(SkSafeMath::Mul(count, elemSize));
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////
 
 // assumes ptr was allocated via sk_malloc
 static void sk_free_releaseproc(void* ptr, void*) {
@@ -38,36 +57,6 @@ sk_sp<SkPixelRef> SkMallocPixelRef::MakeDirect(const SkImageInfo& info,
 sk_sp<SkPixelRef> SkMallocPixelRef::MakeUsing(void*(*allocProc)(size_t),
                                               const SkImageInfo& info,
                                               size_t requestedRowBytes) {
-#ifdef SK_SUPPORT_LEGACY_SAFESIZE64
-    if (!is_valid(info)) {
-        return nullptr;
-    }
-
-    // only want to permit 31bits of rowBytes
-    int64_t minRB = (int64_t)info.minRowBytes64();
-    if (minRB < 0 || !sk_64_isS32(minRB)) {
-        return nullptr;    // allocation will be too large
-    }
-    if (requestedRowBytes > 0 && (int32_t)requestedRowBytes < minRB) {
-        return nullptr;    // cannot meet requested rowbytes
-    }
-
-    int32_t rowBytes;
-    if (requestedRowBytes) {
-        rowBytes = SkToS32(requestedRowBytes);
-    } else {
-        rowBytes = minRB;
-    }
-
-    int64_t bigSize = (int64_t)info.height() * rowBytes;
-    if (!sk_64_isS32(bigSize)) {
-        return nullptr;
-    }
-
-    size_t size = sk_64_asS32(bigSize);
-    SkASSERT(size >= info.getSafeSize(rowBytes));
-    SkASSERT(info.getSafeSize(rowBytes) == info.computeByteSize(rowBytes));
-#else
     size_t rowBytes = requestedRowBytes;
     if (rowBytes == 0) {
         rowBytes = info.minRowBytes();
@@ -80,12 +69,10 @@ sk_sp<SkPixelRef> SkMallocPixelRef::MakeUsing(void*(*allocProc)(size_t),
     size_t size = 0;
     if (!info.isEmpty() && rowBytes) {
         size = info.computeByteSize(rowBytes);
-        if (!size) {
-            return nullptr; // overflow
+        if (SkImageInfo::ByteSizeOverflowed(size)) {
+            return nullptr;
         }
     }
-#endif
-
     void* addr = allocProc(size);
     if (nullptr == addr) {
         return nullptr;
@@ -95,15 +82,13 @@ sk_sp<SkPixelRef> SkMallocPixelRef::MakeUsing(void*(*allocProc)(size_t),
                                                   sk_free_releaseproc, nullptr));
 }
 
-sk_sp<SkPixelRef> SkMallocPixelRef::MakeAllocate(const SkImageInfo& info,
-                                                size_t rowBytes) {
-    auto sk_malloc_nothrow = [](size_t size) { return sk_malloc_flags(size, 0); };
-    return MakeUsing(sk_malloc_nothrow, info, rowBytes);
+sk_sp<SkPixelRef> SkMallocPixelRef::MakeAllocate(const SkImageInfo& info, size_t rowBytes) {
+    return MakeUsing(sk_malloc_canfail, info, rowBytes);
 }
 
 sk_sp<SkPixelRef> SkMallocPixelRef::MakeZeroed(const SkImageInfo& info,
                                                size_t rowBytes) {
-    return MakeUsing(sk_calloc, info, rowBytes);
+    return MakeUsing(sk_calloc_canfail, info, rowBytes);
 }
 
 static void sk_data_releaseproc(void*, void* dataPtr) {
@@ -125,8 +110,8 @@ sk_sp<SkPixelRef> SkMallocPixelRef::MakeWithProc(const SkImageInfo& info,
 }
 
 sk_sp<SkPixelRef> SkMallocPixelRef::MakeWithData(const SkImageInfo& info,
-                                                size_t rowBytes,
-                                                sk_sp<SkData> data) {
+                                                 size_t rowBytes,
+                                                 sk_sp<SkData> data) {
     SkASSERT(data != nullptr);
     if (!is_valid(info)) {
         return nullptr;

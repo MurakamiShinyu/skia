@@ -30,8 +30,7 @@
 #include "SkCodec.h"
 #include "SkCommonFlags.h"
 #include "SkCommonFlagsConfig.h"
-#include "SkCommonFlagsGpuThreads.h"
-#include "SkCommonFlagsPathRenderer.h"
+#include "SkCommonFlagsGpu.h"
 #include "SkData.h"
 #include "SkDebugfTracer.h"
 #include "SkEventTracingPriv.h"
@@ -45,17 +44,16 @@
 #include "SkString.h"
 #include "SkSurface.h"
 #include "SkTaskGroup.h"
-#include "SkThreadUtils.h"
 #include "SkTraceEvent.h"
 #include "Stats.h"
-#include "ThermalManager.h"
 #include "ios_utils.h"
 
 #include <stdlib.h>
+#include <thread>
 
 extern bool gSkForceRasterPipelineBlitter;
 
-#ifndef SK_BUILD_FOR_WIN32
+#ifndef SK_BUILD_FOR_WIN
     #include <unistd.h>
 #endif
 
@@ -65,9 +63,10 @@ extern bool gSkForceRasterPipelineBlitter;
     #include "GrContextFactory.h"
     #include "gl/GrGLUtil.h"
     #include "SkGr.h"
+    using sk_gpu_test::ContextInfo;
     using sk_gpu_test::GrContextFactory;
     using sk_gpu_test::TestContext;
-    std::unique_ptr<GrContextFactory> gGrFactory;
+    GrContextOptions grContextOpts;
 #endif
 
     struct GrContextOptions;
@@ -124,12 +123,9 @@ DEFINE_bool(lite, false, "Use SkLiteRecorder in recording benchmarks?");
 DEFINE_bool(mpd, true, "Use MultiPictureDraw for the SKPs?");
 DEFINE_bool(loopSKP, true, "Loop SKPs like we do for micro benches?");
 DEFINE_int32(flushEvery, 10, "Flush --outResultsFile every Nth run.");
-DEFINE_bool(resetGpuContext, true, "Reset the GrContext before running each test.");
 DEFINE_bool(gpuStats, false, "Print GPU stats after each gpu benchmark?");
 DEFINE_bool(gpuStatsDump, false, "Dump GPU states after each benchmark to json");
 DEFINE_bool(keepAlive, false, "Print a message every so often so that we don't time out");
-DEFINE_string(useThermalManager, "0,1,10,1000", "enabled,threshold,sleepTimeMs,TimeoutMs for "
-                                                "thermalManager\n");
 DEFINE_bool(csv, false, "Print status in CSV format");
 DEFINE_string(sourceType, "",
         "Apply usual --match rules to source type: bench, gm, skp, image, etc.");
@@ -137,10 +133,6 @@ DEFINE_string(benchType,  "",
         "Apply usual --match rules to bench type: micro, recording, piping, playback, skcodec, etc.");
 
 DEFINE_bool(forceRasterPipeline, false, "sets gSkForceRasterPipelineBlitter");
-
-#if SK_SUPPORT_GPU
-DEFINE_pathrenderer_flag;
-#endif
 
 static double now_ms() { return SkTime::GetNSecs() * 1e-6; }
 
@@ -174,44 +166,45 @@ bool Target::capturePixels(SkBitmap* bmp) {
 
 #if SK_SUPPORT_GPU
 struct GPUTarget : public Target {
-    explicit GPUTarget(const Config& c) : Target(c), context(nullptr) { }
-    TestContext* context;
+    explicit GPUTarget(const Config& c) : Target(c) {}
+    ContextInfo contextInfo;
+    std::unique_ptr<GrContextFactory> factory;
 
     void setup() override {
-        this->context->makeCurrent();
+        this->contextInfo.testContext()->makeCurrent();
         // Make sure we're done with whatever came before.
-        this->context->finish();
+        this->contextInfo.testContext()->finish();
     }
     void endTiming() override {
-        if (this->context) {
-            this->context->waitOnSyncOrSwap();
+        if (this->contextInfo.testContext()) {
+            this->contextInfo.testContext()->waitOnSyncOrSwap();
         }
     }
-    void fence() override {
-        this->context->finish();
-    }
+    void fence() override { this->contextInfo.testContext()->finish(); }
 
     bool needsFrameTiming(int* maxFrameLag) const override {
-        if (!this->context->getMaxGpuFrameLag(maxFrameLag)) {
+        if (!this->contextInfo.testContext()->getMaxGpuFrameLag(maxFrameLag)) {
             // Frame lag is unknown.
             *maxFrameLag = FLAGS_gpuFrameLag;
         }
         return true;
     }
     bool init(SkImageInfo info, Benchmark* bench) override {
+        GrContextOptions options = grContextOpts;
+        bench->modifyGrContextOptions(&options);
+        this->factory.reset(new GrContextFactory(options));
         uint32_t flags = this->config.useDFText ? SkSurfaceProps::kUseDeviceIndependentFonts_Flag :
                                                   0;
         SkSurfaceProps props(flags, SkSurfaceProps::kLegacyFontHost_InitType);
-        this->surface = SkSurface::MakeRenderTarget(gGrFactory->get(this->config.ctxType,
-                                                                    this->config.ctxOverrides),
-                                                         SkBudgeted::kNo, info,
-                                                         this->config.samples, &props);
-        this->context = gGrFactory->getContextInfo(this->config.ctxType,
-                                                   this->config.ctxOverrides).testContext();
+        this->surface = SkSurface::MakeRenderTarget(
+                this->factory->get(this->config.ctxType, this->config.ctxOverrides),
+                SkBudgeted::kNo, info, this->config.samples, &props);
+        this->contextInfo =
+                this->factory->getContextInfo(this->config.ctxType, this->config.ctxOverrides);
         if (!this->surface.get()) {
             return false;
         }
-        if (!this->context->fenceSyncSupport()) {
+        if (!this->contextInfo.testContext()->fenceSyncSupport()) {
             SkDebugf("WARNING: GL context for config \"%s\" does not support fence sync. "
                      "Timings might not be accurate.\n", this->config.name.c_str());
         }
@@ -219,9 +212,9 @@ struct GPUTarget : public Target {
     }
     void fillOptions(ResultsWriter* log) override {
         const GrGLubyte* version;
-        if (this->context->backend() == kOpenGL_GrBackend) {
-            const GrGLInterface* gl =
-                    reinterpret_cast<const GrGLInterface*>(this->context->backendContext());
+        if (this->contextInfo.backend() == kOpenGL_GrBackend) {
+            const GrGLInterface* gl = reinterpret_cast<const GrGLInterface*>(
+                    this->contextInfo.testContext()->backendContext());
             GR_GL_CALL_RET(gl, version, GetString(GR_GL_VERSION));
             log->configOption("GL_VERSION", (const char*)(version));
 
@@ -234,6 +227,11 @@ struct GPUTarget : public Target {
             GR_GL_CALL_RET(gl, version, GetString(GR_GL_SHADING_LANGUAGE_VERSION));
             log->configOption("GL_SHADING_LANGUAGE_VERSION", (const char*) version);
         }
+    }
+
+    void dumpStats() override {
+        this->contextInfo.grContext()->printCacheStats();
+        this->contextInfo.grContext()->printGpuStats();
     }
 };
 
@@ -394,10 +392,9 @@ static int setup_gpu_bench(Target* target, Benchmark* bench, int maxGpuFrameLag)
     } else {
         loops = detect_forever_loops(loops);
     }
-
     // Pretty much the same deal as the calibration: do some warmup to make
     // sure we're timing steady-state pipelined frames.
-    for (int i = 0; i < maxGpuFrameLag - 1; i++) {
+    for (int i = 0; i < maxGpuFrameLag; i++) {
         time(loops, bench, target);
     }
 
@@ -427,10 +424,12 @@ static void create_config(const SkCommandLineConfig* config, SkTArray<Config>* c
         const auto colorType = gpuConfig->getColorType();
         auto colorSpace = gpuConfig->getColorSpace();
 
-        if (const GrContext* ctx = gGrFactory->get(ctxType, ctxOverrides)) {
+        GrContextFactory factory(grContextOpts);
+        if (const GrContext* ctx = factory.get(ctxType, ctxOverrides)) {
             GrPixelConfig grPixConfig = SkImageInfo2GrPixelConfig(colorType, colorSpace,
                                                                   *ctx->caps());
-            int supportedSampleCount = ctx->caps()->getSampleCount(sampleCount, grPixConfig);
+            int supportedSampleCount =
+                    ctx->caps()->getRenderTargetSampleCount(sampleCount, grPixConfig);
             if (sampleCount != supportedSampleCount) {
                 SkDebugf("Configuration '%s' sample count %d is not a supported sample count.\n",
                          config->getTag().c_str(), sampleCount);
@@ -578,14 +577,6 @@ static bool valid_brd_bench(sk_sp<SkData> encoded, SkColorType colorType, uint32
 
 static void cleanup_run(Target* target) {
     delete target;
-#if SK_SUPPORT_GPU
-    if (FLAGS_abandonGpuContext) {
-        gGrFactory->abandonContexts();
-    }
-    if (FLAGS_resetGpuContext || FLAGS_abandonGpuContext) {
-        gGrFactory->destroyContexts();
-    }
-#endif
 }
 
 static void collect_files(const SkCommandLineFlags::StringArray& paths, const char* ext,
@@ -609,6 +600,7 @@ public:
                       , fGMs(skiagm::GMRegistry::Head())
                       , fCurrentRecording(0)
                       , fCurrentPiping(0)
+                      , fCurrentDeserialPicture(0)
                       , fCurrentScale(0)
                       , fCurrentSKP(0)
                       , fCurrentSVG(0)
@@ -765,6 +757,21 @@ public:
             fSKPBytes = static_cast<double>(pic->approximateBytesUsed());
             fSKPOps   = pic->approximateOpCount();
             return new PipingBench(name.c_str(), pic.get());
+        }
+
+        // Add all .skps as DeserializePictureBenchs.
+        while (fCurrentDeserialPicture < fSKPs.count()) {
+            const SkString& path = fSKPs[fCurrentDeserialPicture++];
+            sk_sp<SkData> data = SkData::MakeFromFileName(path.c_str());
+            if (!data) {
+                continue;
+            }
+            SkString name = SkOSPath::Basename(path.c_str());
+            fSourceType = "skp";
+            fBenchType  = "deserial";
+            fSKPBytes = static_cast<double>(data->size());
+            fSKPOps   = 0;
+            return new DeserializePictureBench(name.c_str(), std::move(data));
         }
 
         // Then once each for each scale as SKPBenches (playback).
@@ -1093,6 +1100,7 @@ private:
     const char* fBenchType;   // How we bench it: micro, recording, playback, ...
     int fCurrentRecording;
     int fCurrentPiping;
+    int fCurrentDeserialPicture;
     int fCurrentScale;
     int fCurrentSKP;
     int fCurrentSVG;
@@ -1111,21 +1119,18 @@ private:
 // Some runs (mostly, Valgrind) are so slow that the bot framework thinks we've hung.
 // This prints something every once in a while so that it knows we're still working.
 static void start_keepalive() {
-    struct Loop {
-        static void forever(void*) {
-            for (;;) {
-                static const int kSec = 1200;
-            #if defined(SK_BUILD_FOR_WIN)
-                Sleep(kSec * 1000);
-            #else
-                sleep(kSec);
-            #endif
-                SkDebugf("\nBenchmarks still running...\n");
-            }
+    static std::thread* intentionallyLeaked = new std::thread([]{
+        for (;;) {
+            static const int kSec = 1200;
+        #if defined(SK_BUILD_FOR_WIN)
+            Sleep(kSec * 1000);
+        #else
+            sleep(kSec);
+        #endif
+            SkDebugf("\nBenchmarks still running...\n");
         }
-    };
-    static SkThread* intentionallyLeaked = new SkThread(Loop::forever);
-    intentionallyLeaked->start();
+    });
+    (void)intentionallyLeaked;
 }
 
 int main(int argc, char** argv) {
@@ -1141,10 +1146,7 @@ int main(int argc, char** argv) {
     SkTaskGroup::Enabler enabled(FLAGS_threads);
 
 #if SK_SUPPORT_GPU
-    GrContextOptions grContextOpts;
-    grContextOpts.fGpuPathRenderers = CollectGpuPathRenderersFromFlags();
-    grContextOpts.fExecutor = GpuExecutorForTools();
-    gGrFactory.reset(new GrContextFactory(grContextOpts));
+    SetCtxOptionsFromCommonFlags(&grContextOpts);
 #endif
 
     if (FLAGS_veryVerbose) {
@@ -1210,16 +1212,6 @@ int main(int argc, char** argv) {
     SkTArray<Config> configs;
     create_configs(&configs);
 
-#ifdef THERMAL_MANAGER_SUPPORTED
-    int tmEnabled, tmThreshold, tmSleepTimeMs, tmTimeoutMs;
-    if (4 != sscanf(FLAGS_useThermalManager[0], "%d,%d,%d,%d",
-                    &tmEnabled, &tmThreshold, &tmSleepTimeMs, &tmTimeoutMs)) {
-        SkDebugf("Can't parse %s from --useThermalManager.\n", FLAGS_useThermalManager[0]);
-        exit(1);
-    }
-    ThermalManager tm(tmThreshold, tmSleepTimeMs, tmTimeoutMs);
-#endif
-
     if (FLAGS_keepAlive) {
         start_keepalive();
     }
@@ -1250,11 +1242,6 @@ int main(int argc, char** argv) {
             bench->delayedSetup();
         }
         for (int i = 0; i < configs.count(); ++i) {
-#ifdef THERMAL_MANAGER_SUPPORTED
-            if (tmEnabled && !tm.coolOffIfNecessary()) {
-                SkDebugf("Could not cool off, timings will be throttled\n");
-            }
-#endif
             Target* target = is_enabled(b, configs[i]);
             if (!target) {
                 continue;
@@ -1401,10 +1388,7 @@ int main(int argc, char** argv) {
 
 #if SK_SUPPORT_GPU
             if (FLAGS_gpuStats && Benchmark::kGPU_Backend == configs[i].backend) {
-                GrContext* context = gGrFactory->get(configs[i].ctxType,
-                                                     configs[i].ctxOverrides);
-                context->printCacheStats();
-                context->printGpuStats();
+                target->dumpStats();
             }
 #endif
 
@@ -1424,12 +1408,6 @@ int main(int argc, char** argv) {
     log->bench("memory_usage", 0,0);
     log->config("meta");
     log->metric("max_rss_mb", sk_tools::getMaxResidentSetSizeMB());
-
-#if SK_SUPPORT_GPU
-    // Make sure we clean up the global GrContextFactory here, otherwise we might race with the
-    // SkEventTracer destructor
-    gGrFactory.reset(nullptr);
-#endif
 
     return 0;
 }

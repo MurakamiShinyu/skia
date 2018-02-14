@@ -10,7 +10,7 @@
 #include "GrContext.h"
 #include "GrContextPriv.h"
 #include "GrGpuResourcePriv.h"
-#include "GrResourceProvider.h"
+#include "GrProxyProvider.h"
 #include "GrSurfaceContext.h"
 #include "SkBitmap.h"
 #include "SkGr.h"
@@ -37,31 +37,28 @@ sk_sp<GrTextureProxy> GrBitmapTextureMaker::refOriginalTextureProxy(bool willBeM
         return nullptr;
     }
 
+    GrProxyProvider* proxyProvider = this->context()->contextPriv().proxyProvider();
     sk_sp<GrTextureProxy> proxy;
 
     if (fOriginalKey.isValid()) {
-        proxy = this->context()->resourceProvider()->findOrCreateProxyByUniqueKey(
-                                                            fOriginalKey, kTopLeft_GrSurfaceOrigin);
-        if (proxy && (!willBeMipped || proxy->isMipMapped())) {
+        proxy = proxyProvider->findOrCreateProxyByUniqueKey(fOriginalKey, kTopLeft_GrSurfaceOrigin);
+        if (proxy && (!willBeMipped || GrMipMapped::kYes == proxy->mipMapped())) {
             return proxy;
         }
     }
 
     if (!proxy) {
         if (willBeMipped) {
-            proxy = GrGenerateMipMapsAndUploadToTextureProxy(this->context(), fBitmap,
-                                                             dstColorSpace);
+            proxy = proxyProvider->createMipMapProxyFromBitmap(fBitmap, dstColorSpace);
         }
         if (!proxy) {
-            proxy = GrUploadBitmapToTextureProxy(this->context()->resourceProvider(), fBitmap,
-                                                 dstColorSpace);
+            proxy = GrUploadBitmapToTextureProxy(proxyProvider, fBitmap, dstColorSpace);
         }
         if (proxy) {
             if (fOriginalKey.isValid()) {
-                this->context()->resourceProvider()->assignUniqueKeyToProxy(fOriginalKey,
-                                                                            proxy.get());
+                proxyProvider->assignUniqueKeyToProxy(fOriginalKey, proxy.get());
             }
-            if (!willBeMipped || proxy->isMipMapped()) {
+            if (!willBeMipped || GrMipMapped::kYes == proxy->mipMapped()) {
                 SkASSERT(proxy->origin() == kTopLeft_GrSurfaceOrigin);
                 if (fOriginalKey.isValid()) {
                     GrInstallBitmapUniqueKeyInvalidator(fOriginalKey, fBitmap.pixelRef());
@@ -73,12 +70,11 @@ sk_sp<GrTextureProxy> GrBitmapTextureMaker::refOriginalTextureProxy(bool willBeM
 
     if (proxy) {
         SkASSERT(willBeMipped);
-        SkASSERT(!proxy->isMipMapped());
+        SkASSERT(GrMipMapped::kNo == proxy->mipMapped());
         // We need a mipped proxy, but we either found a proxy earlier that wasn't mipped or
         // generated a non mipped proxy. Thus we generate a new mipped surface and copy the original
         // proxy into the base layer. We will then let the gpu generate the rest of the mips.
-        if (auto mippedProxy = GrCopyBaseMipMapToTextureProxy(this->context(), proxy.get(),
-                                                              dstColorSpace)) {
+        if (auto mippedProxy = GrCopyBaseMipMapToTextureProxy(this->context(), proxy.get())) {
             SkASSERT(mippedProxy->origin() == kTopLeft_GrSurfaceOrigin);
             if (fOriginalKey.isValid()) {
                 // In this case we are stealing the key from the original proxy which should only
@@ -87,10 +83,8 @@ sk_sp<GrTextureProxy> GrBitmapTextureMaker::refOriginalTextureProxy(bool willBeM
                 // mipmapped version. The texture backing the unmipped version will remain in the
                 // resource cache until the last texture proxy referencing it is deleted at which
                 // time it too will be deleted or recycled.
-                this->context()->resourceProvider()->removeUniqueKeyFromProxy(fOriginalKey,
-                                                                              proxy.get());
-                this->context()->resourceProvider()->assignUniqueKeyToProxy(fOriginalKey,
-                                                                            mippedProxy.get());
+                proxyProvider->removeUniqueKeyFromProxy(fOriginalKey, proxy.get());
+                proxyProvider->assignUniqueKeyToProxy(fOriginalKey, mippedProxy.get());
                 GrInstallBitmapUniqueKeyInvalidator(fOriginalKey, fBitmap.pixelRef());
             }
             return mippedProxy;

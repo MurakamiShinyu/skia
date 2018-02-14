@@ -64,6 +64,13 @@ bool does_full_buffer_contain_correct_values(GrColor* srcBuffer,
 
 void basic_transfer_test(skiatest::Reporter* reporter, GrContext* context, GrPixelConfig config,
                          GrSurfaceOrigin origin, bool renderTarget) {
+    if (GrCaps::kNone_MapFlags == context->caps()->mapBufferFlags()) {
+        return;
+    }
+
+    auto resourceProvider = context->contextPriv().resourceProvider();
+    GrGpu* gpu = context->contextPriv().getGpu();
+
     // set up the data
     const int kTextureWidth = 16;
     const int kTextureHeight = 16;
@@ -78,10 +85,10 @@ void basic_transfer_test(skiatest::Reporter* reporter, GrContext* context, GrPix
     // create and fill transfer buffer
     size_t size = rowBytes*kBufferHeight;
     uint32_t bufferFlags = GrResourceProvider::kNoPendingIO_Flag;
-    sk_sp<GrBuffer> buffer(context->resourceProvider()->createBuffer(size,
-                                                                     kXferCpuToGpu_GrBufferType,
-                                                                     kDynamic_GrAccessPattern,
-                                                                     bufferFlags));
+    sk_sp<GrBuffer> buffer(resourceProvider->createBuffer(size,
+                                                          kXferCpuToGpu_GrBufferType,
+                                                          kDynamic_GrAccessPattern,
+                                                          bufferFlags));
     if (!buffer) {
         return;
     }
@@ -97,20 +104,20 @@ void basic_transfer_test(skiatest::Reporter* reporter, GrContext* context, GrPix
     desc.fWidth = kTextureWidth;
     desc.fHeight = kTextureHeight;
     desc.fConfig = config;
-    desc.fSampleCnt = 0;
-    sk_sp<GrTexture> tex = context->resourceProvider()->createTexture(desc, SkBudgeted::kNo);
+    desc.fSampleCnt = 1;
+    sk_sp<GrTexture> tex = resourceProvider->createTexture(desc, SkBudgeted::kNo);
 
     //////////////////////////
     // transfer full data
 
     bool result;
-    result = context->getGpu()->transferPixels(tex.get(), 0, 0, kTextureWidth, kTextureHeight,
-                                               config, buffer.get(), 0, rowBytes);
+    result = gpu->transferPixels(tex.get(), 0, 0, kTextureWidth, kTextureHeight,
+                                 config, buffer.get(), 0, rowBytes);
     REPORTER_ASSERT(reporter, result);
 
     memset(dstBuffer.get(), 0xCDCD, size);
-    result = context->getGpu()->readPixels(tex.get(), origin, 0, 0, kTextureWidth, kTextureHeight,
-                                           config, dstBuffer.get(), rowBytes);
+    result = gpu->readPixels(tex.get(), origin, 0, 0, kTextureWidth, kTextureHeight,
+                             config, dstBuffer.get(), rowBytes);
     if (result) {
         REPORTER_ASSERT(reporter, does_full_buffer_contain_correct_values(srcBuffer,
                                                                           dstBuffer,
@@ -136,13 +143,13 @@ void basic_transfer_test(skiatest::Reporter* reporter, GrContext* context, GrPix
     buffer->unmap();
 
     size_t offset = sizeof(GrColor)*(kTop*kBufferWidth + kLeft);
-    result = context->getGpu()->transferPixels(tex.get(), kLeft, kTop, kWidth, kHeight, config,
-                                               buffer.get(), offset, rowBytes);
+    result = gpu->transferPixels(tex.get(), kLeft, kTop, kWidth, kHeight, config,
+                                 buffer.get(), offset, rowBytes);
     REPORTER_ASSERT(reporter, result);
 
     memset(dstBuffer.get(), 0xCDCD, size);
-    result = context->getGpu()->readPixels(tex.get(), origin, 0, 0, kTextureWidth, kTextureHeight,
-                                           config, dstBuffer.get(), rowBytes);
+    result = gpu->readPixels(tex.get(), origin, 0, 0, kTextureWidth, kTextureHeight,
+                             config, dstBuffer.get(), rowBytes);
     if (result) {
         REPORTER_ASSERT(reporter, does_full_buffer_contain_correct_values(srcBuffer,
                                                                           dstBuffer,

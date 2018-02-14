@@ -17,6 +17,7 @@
 #include "GrSamplerState.h"
 #include "GrShaderVar.h"
 #include "GrSurfaceProxyPriv.h"
+#include "GrSurfaceProxyRef.h"
 #include "GrTextureProxy.h"
 #include "SkMath.h"
 #include "SkString.h"
@@ -64,6 +65,95 @@ private:
  */
 class GrProcessor {
 public:
+    enum ClassID {
+        kBigKeyProcessor_ClassID,
+        kBlockInputFragmentProcessor_ClassID,
+        kCircleGeometryProcessor_ClassID,
+        kCircularRRectEffect_ClassID,
+        kColorMatrixEffect_ClassID,
+        kColorTableEffect_ClassID,
+        kComposeOneFragmentProcessor_ClassID,
+        kComposeTwoFragmentProcessor_ClassID,
+        kCoverageSetOpXP_ClassID,
+        kCustomXP_ClassID,
+        kDashingCircleEffect_ClassID,
+        kDashingLineEffect_ClassID,
+        kDefaultGeoProc_ClassID,
+        kDIEllipseGeometryProcessor_ClassID,
+        kDisableColorXP_ClassID,
+        kTwoPointConicalEffect_ClassID,
+        kEllipseGeometryProcessor_ClassID,
+        kEllipticalRRectEffect_ClassID,
+        kGP_ClassID,
+        kGrAARectEffect_ClassID,
+        kGrAlphaThresholdFragmentProcessor_ClassID,
+        kGrArithmeticFP_ClassID,
+        kGrBicubicEffect_ClassID,
+        kGrBitmapTextGeoProc_ClassID,
+        kGrBlurredEdgeFragmentProcessor_ClassID,
+        kGrCCClipProcessor_ClassID,
+        kGrCCCoverageProcessor_ClassID,
+        kGrCCPathProcessor_ClassID,
+        kGrCircleBlurFragmentProcessor_ClassID,
+        kGrCircleEffect_ClassID,
+        kGrColorSpaceXformEffect_ClassID,
+        kGrConfigConversionEffect_ClassID,
+        kGrConicEffect_ClassID,
+        kGrConstColorProcessor_ClassID,
+        kGrConvexPolyEffect_ClassID,
+        kGrCubicEffect_ClassID,
+        kGrDeviceSpaceTextureDecalFragmentProcessor_ClassID,
+        kGrDiffuseLightingEffect_ClassID,
+        kGrDisplacementMapEffect_ClassID,
+        kGrDistanceFieldA8TextGeoProc_ClassID,
+        kGrDistanceFieldLCDTextGeoProc_ClassID,
+        kGrDistanceFieldPathGeoProc_ClassID,
+        kGrDitherEffect_ClassID,
+        kGrEllipseEffect_ClassID,
+        kGrGaussianConvolutionFragmentProcessor_ClassID,
+        kGrImprovedPerlinNoiseEffect_ClassID,
+        kGrLightingEffect_ClassID,
+        kGrLinearGradient_ClassID,
+        kGrLumaColorFilterEffect_ClassID,
+        kGrMagnifierEffect_ClassID,
+        kGrMatrixConvolutionEffect_ClassID,
+        kGrMeshTestProcessor_ClassID,
+        kGrMorphologyEffect_ClassID,
+        kGrNonlinearColorSpaceXformEffect_ClassID,
+        kGrOverdrawFragmentProcessor_ClassID,
+        kGrPathProcessor_ClassID,
+        kGrPerlinNoise2Effect_ClassID,
+        kGrPipelineDynamicStateTestProcessor_ClassID,
+        kGrPremulInputFragmentProcessor_ClassID,
+        kGrQuadEffect_ClassID,
+        kGrRadialGradient_ClassID,
+        kGrRectBlurEffect_ClassID,
+        kGrRRectBlurEffect_ClassID,
+        kGrRRectShadowGeoProc_ClassID,
+        kGrSimpleTextureEffect_ClassID,
+        kGrSpecularLightingEffect_ClassID,
+        kGrSRGBEffect_ClassID,
+        kGrSweepGradient_ClassID,
+        kGrTextureDomainEffect_ClassID,
+        kGrUnpremulInputFragmentProcessor_ClassID,
+        kGrYUVtoRGBEffect_ClassID,
+        kHighContrastFilterEffect_ClassID,
+        kInstanceProcessor_ClassID,
+        kLumaColorFilterEffect_ClassID,
+        kMSAAQuadProcessor_ClassID,
+        kPDLCDXferProcessor_ClassID,
+        kPorterDuffXferProcessor_ClassID,
+        kPremulFragmentProcessor_ClassID,
+        kQuadEdgeEffect_ClassID,
+        kReplaceInputFragmentProcessor_ClassID,
+        kRRectsGaussianEdgeFP_ClassID,
+        kSeriesFragmentProcessor_ClassID,
+        kShaderPDXferProcessor_ClassID,
+        kSwizzleFragmentProcessor_ClassID,
+        kTestFP_ClassID,
+        kTextureGeometryProcessor_ClassID,
+    };
+
     virtual ~GrProcessor() = default;
 
     /** Human-meaningful string to identify this prcoessor; may be embedded in generated shader
@@ -102,10 +192,12 @@ public:
     /** Helper for down-casting to a GrProcessor subclass */
     template <typename T> const T& cast() const { return *static_cast<const T*>(this); }
 
-    uint32_t classID() const { SkASSERT(kIllegalProcessorClassID != fClassID); return fClassID; }
+    ClassID classID() const { return fClassID; }
 
 protected:
-    GrProcessor() : fClassID(kIllegalProcessorClassID), fRequiredFeatures(kNone_RequiredFeatures) {}
+    GrProcessor(ClassID classID)
+    : fClassID(classID)
+    , fRequiredFeatures(kNone_RequiredFeatures) {}
 
     /**
      * If the prcoessor will generate code that uses platform specific built-in features, then it
@@ -118,34 +210,12 @@ protected:
         fRequiredFeatures |= other.fRequiredFeatures;
     }
 
-    template <typename PROC_SUBCLASS> void initClassID() {
-         static uint32_t kClassID = GenClassID();
-         fClassID = kClassID;
-    }
-
 private:
     GrProcessor(const GrProcessor&) = delete;
     GrProcessor& operator=(const GrProcessor&) = delete;
 
-    static uint32_t GenClassID() {
-        // fCurrProcessorClassID has been initialized to kIllegalProcessorClassID. The
-        // atomic inc returns the old value not the incremented value. So we add
-        // 1 to the returned value.
-        uint32_t id = static_cast<uint32_t>(sk_atomic_inc(&gCurrProcessorClassID)) + 1;
-        if (!id) {
-            SK_ABORT("This should never wrap as it should only be called once for each GrProcessor "
-                   "subclass.");
-        }
-        return id;
-    }
-
-    enum {
-        kIllegalProcessorClassID = 0,
-    };
-    static int32_t gCurrProcessorClassID;
-
-    uint32_t                                        fClassID;
-    RequiredFeatures                                fRequiredFeatures;
+    ClassID          fClassID;
+    RequiredFeatures fRequiredFeatures;
 };
 
 GR_MAKE_BITFIELD_OPS(GrProcessor::RequiredFeatures);
@@ -155,7 +225,6 @@ class GrResourceIOProcessor : public GrProcessor {
 public:
     class TextureSampler;
     class BufferAccess;
-    class ImageStorageAccess;
 
     int numTextureSamplers() const { return fTextureSamplers.count(); }
 
@@ -169,28 +238,20 @@ public:
         numBuffers(). */
     const BufferAccess& bufferAccess(int index) const { return *fBufferAccesses[index]; }
 
-    int numImageStorages() const { return fImageStorageAccesses.count(); }
-
-    /** Returns the access object for the image at index. index must be valid according to
-        numImages(). */
-    const ImageStorageAccess& imageStorageAccess(int index) const {
-        return *fImageStorageAccesses[index];
-    }
-
     bool instantiate(GrResourceProvider* resourceProvider) const;
 
 protected:
-    GrResourceIOProcessor() {}
+    GrResourceIOProcessor(ClassID classID)
+    : INHERITED(classID) {}
 
     /**
-     * Subclasses call these from their constructor to register sampler/image sources. The processor
+     * Subclasses call these from their constructor to register sampler sources. The processor
      * subclass manages the lifetime of the objects (these functions only store pointers). The
      * TextureSampler and/or BufferAccess instances are typically member fields of the GrProcessor
      * subclass. These must only be called from the constructor because GrProcessors are immutable.
      */
     void addTextureSampler(const TextureSampler*);
     void addBufferAccess(const BufferAccess*);
-    void addImageStorageAccess(const ImageStorageAccess*);
 
     bool hasSameSamplersAndAccesses(const GrResourceIOProcessor&) const;
 
@@ -202,7 +263,6 @@ protected:
 private:
     SkSTArray<4, const TextureSampler*, true> fTextureSamplers;
     SkSTArray<1, const BufferAccess*, true> fBufferAccesses;
-    SkSTArray<1, const ImageStorageAccess*, true> fImageStorageAccesses;
 
     typedef GrProcessor INHERITED;
 };
@@ -332,67 +392,6 @@ private:
     GrTGpuResourceRef<GrBuffer> fBuffer;
     GrShaderFlags fVisibility;
 
-    typedef SkNoncopyable INHERITED;
-};
-
-/**
- * This is used by a GrProcessor to access a texture using image load/store in its shader code.
- * ImageStorageAccesses don't perform any coord manipulation to account for texture origin.
- * Currently the format of the load/store data in the shader is inferred from the texture config,
- * though it could be made explicit.
- */
-class GrResourceIOProcessor::ImageStorageAccess {
-public:
-    ImageStorageAccess(sk_sp<GrTextureProxy>, GrIOType, GrSLMemoryModel, GrSLRestrict,
-                       GrShaderFlags visibility = kFragment_GrShaderFlag);
-    /**
-     * This copy constructor is used by GrFragmentProcessor::clone() implementations. The copy
-     * always takes a new ref on the surface proxy as the new fragment processor will not yet be
-     * in pending execution state.
-     */
-    explicit ImageStorageAccess(const ImageStorageAccess& that)
-            : fProxyRef(sk_ref_sp(that.fProxyRef.get()), that.fProxyRef.ioType())
-            , fVisibility(that.fVisibility)
-            , fFormat(that.fFormat)
-            , fMemoryModel(that.fMemoryModel)
-            , fRestrict(that.fRestrict) {}
-
-    ImageStorageAccess& operator=(const ImageStorageAccess&) = delete;
-
-    bool operator==(const ImageStorageAccess& that) const {
-        return this->proxy() == that.proxy() && fVisibility == that.fVisibility;
-    }
-
-    bool operator!=(const ImageStorageAccess& that) const { return !(*this == that); }
-
-    GrTextureProxy* proxy() const { return fProxyRef.get()->asTextureProxy(); }
-    GrShaderFlags visibility() const { return fVisibility; }
-    GrIOType ioType() const { return fProxyRef.ioType(); }
-    GrImageStorageFormat format() const { return fFormat; }
-    GrSLMemoryModel memoryModel() const { return fMemoryModel; }
-    GrSLRestrict restrict() const { return fRestrict; }
-
-    // 'instantiate' should only ever be called at flush time.
-    bool instantiate(GrResourceProvider* resourceProvider) const {
-        return SkToBool(fProxyRef.get()->instantiate(resourceProvider));
-    }
-    // 'peekTexture' should only ever be called after a successful 'instantiate' call
-    GrTexture* peekTexture() const {
-        SkASSERT(fProxyRef.get()->priv().peekTexture());
-        return fProxyRef.get()->priv().peekTexture();
-    }
-
-    /**
-     * For internal use by GrProcessor.
-     */
-    const GrSurfaceProxyRef* programProxy() const { return &fProxyRef; }
-
-private:
-    GrSurfaceProxyRef    fProxyRef;
-    GrShaderFlags        fVisibility;
-    GrImageStorageFormat fFormat;
-    GrSLMemoryModel      fMemoryModel;
-    GrSLRestrict         fRestrict;
     typedef SkNoncopyable INHERITED;
 };
 

@@ -6,10 +6,11 @@
  */
 
 #include "SkColorSpaceXformer.h"
+#include "SkReadBuffer.h"
 #include "SkSweepGradient.h"
-
 #include "SkPM4fPriv.h"
 #include "SkRasterPipeline.h"
+#include "SkWriteBuffer.h"
 
 SkSweepGradient::SkSweepGradient(const SkPoint& center, SkScalar t0, SkScalar t1,
                                  const Descriptor& desc)
@@ -76,8 +77,9 @@ public:
 
     static std::unique_ptr<GrFragmentProcessor> Make(const CreateArgs& args, SkScalar tBias,
                                                      SkScalar tScale) {
-        auto processor = std::unique_ptr<GrSweepGradient>(new GrSweepGradient(args, tBias, tScale));
-        return processor->isValid() ? std::move(processor) : nullptr;
+        return GrGradientEffect::AdjustFP(std::unique_ptr<GrSweepGradient>(
+                new GrSweepGradient(args, tBias, tScale)),
+                args);
     }
 
     const char* name() const override { return "Sweep Gradient"; }
@@ -88,30 +90,23 @@ public:
 
 private:
     explicit GrSweepGradient(const CreateArgs& args, SkScalar tBias, SkScalar tScale)
-            : INHERITED(args, args.fShader->colorsAreOpaque())
+            : INHERITED(kGrSweepGradient_ClassID, args, args.fShader->colorsAreOpaque())
             , fTBias(tBias)
-            , fTScale(tScale){
-        this->initClassID<GrSweepGradient>();
-    }
+            , fTScale(tScale) {}
 
     explicit GrSweepGradient(const GrSweepGradient& that)
             : INHERITED(that)
             , fTBias(that.fTBias)
-            , fTScale(that.fTScale) {
-        this->initClassID<GrSweepGradient>();
-    }
+            , fTScale(that.fTScale) {}
 
     GrGLSLFragmentProcessor* onCreateGLSLInstance() const override;
 
-    virtual void onGetGLSLProcessorKey(const GrShaderCaps& caps,
-                                       GrProcessorKeyBuilder* b) const override;
-
-     bool onIsEqual(const GrFragmentProcessor& base) const override {
-         const GrSweepGradient& fp = base.cast<GrSweepGradient>();
-         return INHERITED::onIsEqual(base)
-             && fTBias == fp.fTBias
-             && fTScale == fp.fTScale;
-     }
+    bool onIsEqual(const GrFragmentProcessor& base) const override {
+        const GrSweepGradient& fp = base.cast<GrSweepGradient>();
+        return INHERITED::onIsEqual(base)
+            && fTBias == fp.fTBias
+            && fTScale == fp.fTScale;
+    }
 
     GR_DECLARE_FRAGMENT_PROCESSOR_TEST
 
@@ -130,11 +125,6 @@ public:
         , fCachedTScale(SK_FloatNaN) {}
 
     void emitCode(EmitArgs&) override;
-
-    static void GenKey(const GrProcessor& processor, const GrShaderCaps&,
-                       GrProcessorKeyBuilder* b) {
-        b->add32(GenBaseGradientKey(processor));
-    }
 
 protected:
     void onSetData(const GrGLSLProgramDataManager& pdman,
@@ -164,12 +154,6 @@ private:
 GrGLSLFragmentProcessor* GrSweepGradient::onCreateGLSLInstance() const {
     return new GrSweepGradient::GLSLSweepProcessor(*this);
 }
-
-void GrSweepGradient::onGetGLSLProcessorKey(const GrShaderCaps& caps,
-                                            GrProcessorKeyBuilder* b) const {
-    GrSweepGradient::GLSLSweepProcessor::GenKey(*this, caps, b);
-}
-
 
 /////////////////////////////////////////////////////////////////////
 
@@ -230,7 +214,7 @@ void GrSweepGradient::GLSLSweepProcessor::emitCode(EmitArgs& args) {
 /////////////////////////////////////////////////////////////////////
 
 std::unique_ptr<GrFragmentProcessor> SkSweepGradient::asFragmentProcessor(
-        const AsFPArgs& args) const {
+        const GrFPArgs& args) const {
     SkMatrix matrix;
     if (!this->getLocalMatrix().invert(&matrix)) {
         return nullptr;
@@ -244,29 +228,22 @@ std::unique_ptr<GrFragmentProcessor> SkSweepGradient::asFragmentProcessor(
     }
     matrix.postConcat(fPtsToUnit);
 
-    sk_sp<GrColorSpaceXform> colorSpaceXform = GrColorSpaceXform::Make(fColorSpace.get(),
-                                                                       args.fDstColorSpace);
-    auto inner = GrSweepGradient::Make(
+    return GrSweepGradient::Make(
             GrGradientEffect::CreateArgs(args.fContext, this, &matrix, fTileMode,
-                                         std::move(colorSpaceXform), SkToBool(args.fDstColorSpace)),
+                                         args.fDstColorSpaceInfo->colorSpace()),
             fTBias, fTScale);
-    if (!inner) {
-        return nullptr;
-    }
-    return GrFragmentProcessor::MulOutputByInputAlpha(std::move(inner));
 }
 
 #endif
 
 sk_sp<SkShader> SkSweepGradient::onMakeColorSpace(SkColorSpaceXformer* xformer) const {
-    SkSTArray<8, SkColor> xformedColors(fColorCount);
-    xformer->apply(xformedColors.begin(), fOrigColors, fColorCount);
+    const AutoXformColors xformedColors(*this, xformer);
 
     SkScalar startAngle, endAngle;
     std::tie(startAngle, endAngle) = angles_from_t_coeff(fTBias, fTScale);
 
-    return SkGradientShader::MakeSweep(fCenter.fX, fCenter.fY, xformedColors.begin(), fOrigPos,
-                                       fColorCount, fTileMode, startAngle, endAngle,
+    return SkGradientShader::MakeSweep(fCenter.fX, fCenter.fY, xformedColors.fColors.get(),
+                                       fOrigPos, fColorCount, fTileMode, startAngle, endAngle,
                                        fGradFlags, &this->getLocalMatrix());
 }
 

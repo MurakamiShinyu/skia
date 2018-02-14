@@ -8,7 +8,7 @@
 #include "GrTextureStripAtlas.h"
 #include "GrContext.h"
 #include "GrContextPriv.h"
-#include "GrResourceProvider.h"
+#include "GrProxyProvider.h"
 #include "GrSurfaceContext.h"
 #include "SkGr.h"
 #include "SkPixelRef.h"
@@ -95,6 +95,15 @@ void GrTextureStripAtlas::lockRow(int row) {
 
 int GrTextureStripAtlas::lockRow(const SkBitmap& bitmap) {
     VALIDATE;
+
+    if (!this->getContext()->contextPriv().resourceProvider()) {
+        // DDL TODO: For DDL we need to schedule inline & ASAP uploads. However these systems
+        // currently use the flushState which we can't use for the opList-based DDL phase.
+        // For the opList-based solution every texture strip will get its own texture proxy.
+        // We will revisit this for the flushState-based solution.
+        return -1;
+    }
+
     if (0 == fLockedRows) {
         this->lockTexture();
         if (!fTexContext) {
@@ -207,7 +216,9 @@ void GrTextureStripAtlas::lockTexture() {
     builder[0] = static_cast<uint32_t>(fCacheKey);
     builder.finish();
 
-    sk_sp<GrTextureProxy> proxy = fDesc.fContext->resourceProvider()->findOrCreateProxyByUniqueKey(
+    GrProxyProvider* proxyProvider = fDesc.fContext->contextPriv().proxyProvider();
+
+    sk_sp<GrTextureProxy> proxy = proxyProvider->findOrCreateProxyByUniqueKey(
                                                                 key, kTopLeft_GrSurfaceOrigin);
     if (!proxy) {
         GrSurfaceDesc texDesc;
@@ -216,23 +227,20 @@ void GrTextureStripAtlas::lockTexture() {
         texDesc.fHeight = fDesc.fHeight;
         texDesc.fConfig = fDesc.fConfig;
 
-        proxy = GrSurfaceProxy::MakeDeferred(fDesc.fContext->resourceProvider(),
-                                             texDesc, SkBackingFit::kExact,
-                                             SkBudgeted::kYes,
-                                             GrResourceProvider::kNoPendingIO_Flag);
+        proxy = proxyProvider->createProxy(texDesc, SkBackingFit::kExact, SkBudgeted::kYes,
+                                           GrResourceProvider::kNoPendingIO_Flag);
         if (!proxy) {
             return;
         }
 
         SkASSERT(proxy->origin() == kTopLeft_GrSurfaceOrigin);
-        fDesc.fContext->resourceProvider()->assignUniqueKeyToProxy(key, proxy.get());
+        proxyProvider->assignUniqueKeyToProxy(key, proxy.get());
         // This is a new texture, so all of our cache info is now invalid
         this->initLRU();
         fKeyTable.rewind();
     }
     SkASSERT(proxy);
-    fTexContext = fDesc.fContext->contextPriv().makeWrappedSurfaceContext(std::move(proxy),
-                                                                          nullptr);
+    fTexContext = fDesc.fContext->contextPriv().makeWrappedSurfaceContext(std::move(proxy));
 }
 
 void GrTextureStripAtlas::unlockTexture() {

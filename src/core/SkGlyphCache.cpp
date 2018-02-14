@@ -5,6 +5,7 @@
  * found in the LICENSE file.
  */
 
+
 #include "SkGlyphCache.h"
 #include "SkGlyphCache_Globals.h"
 #include "SkGraphics.h"
@@ -491,7 +492,7 @@ SkGlyphCache* SkGlyphCache::VisitCache(SkTypeface* typeface,
     // Precondition: the typeface id must be the fFontID in the descriptor
     SkDEBUGCODE(
         uint32_t length = 0;
-        const SkScalerContext::Rec* rec = static_cast<const SkScalerContext::Rec*>(
+        const SkScalerContextRec* rec = static_cast<const SkScalerContextRec*>(
             desc->findEntry(kRec_SkDescriptorTag, &length));
         SkASSERT(rec);
         SkASSERT(length == sizeof(*rec));
@@ -810,3 +811,16 @@ void SkGraphics::PurgeFontCache() {
 // TODO(herb): clean up TLS apis.
 size_t SkGraphics::GetTLSFontCacheLimit() { return 0; }
 void SkGraphics::SetTLSFontCacheLimit(size_t bytes) { }
+
+SkGlyphCache* SkGlyphCache::DetachCacheUsingPaint(const SkPaint& paint,
+                                                  const SkSurfaceProps* surfaceProps,
+                                                  SkScalerContextFlags scalerContextFlags,
+                                                  const SkMatrix* deviceMatrix) {
+    SkAutoDescriptor ad;
+    SkScalerContextEffects effects;
+
+    auto desc = SkScalerContext::CreateDescriptorAndEffectsUsingPaint(
+        paint, surfaceProps, scalerContextFlags, deviceMatrix, &ad, &effects);
+
+    return SkGlyphCache::DetachCache(paint.getTypeface(), effects, desc);
+}

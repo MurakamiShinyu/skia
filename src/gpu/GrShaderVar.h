@@ -29,7 +29,7 @@ public:
     };
 
     /**
-     * Values for array count that have special meaning. We allow 1-sized arrays.git 
+     * Values for array count that have special meaning. We allow 1-sized arrays.git
      */
     enum {
         kNonArray     =  0, // not an array
@@ -282,12 +282,6 @@ public:
             fLayoutQualifier.appendf(", %s", layoutQualifier);
         }
     }
-
-    void setImageStorageFormat(GrImageStorageFormat format);
-
-    void setMemoryModel(GrSLMemoryModel);
-
-    void setRestrict(GrSLRestrict);
 
     void setIOType(GrIOType);
 

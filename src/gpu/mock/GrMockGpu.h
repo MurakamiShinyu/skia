@@ -20,8 +20,8 @@ class GrPipeline;
 
 class GrMockGpu : public GrGpu {
 public:
-    static GrGpu* Create(GrBackendContext, const GrContextOptions&, GrContext*);
-    static GrGpu* Create(const GrMockOptions*, const GrContextOptions&, GrContext*);
+    static sk_sp<GrGpu> Make(GrBackendContext, const GrContextOptions&, GrContext*);
+    static sk_sp<GrGpu> Make(const GrMockOptions*, const GrContextOptions&, GrContext*);
 
     ~GrMockGpu() override {}
 
@@ -59,6 +59,7 @@ public:
         return nullptr;
     }
     sk_sp<GrSemaphore> wrapBackendSemaphore(const GrBackendSemaphore& semaphore,
+                                            GrResourceProvider::SemaphoreWrapType wrapType,
                                             GrWrapOwnership ownership) override { return nullptr; }
     void insertSemaphore(sk_sp<GrSemaphore> semaphore, bool flush) override {}
     void waitSemaphore(sk_sp<GrSemaphore> semaphore) override {}
@@ -98,8 +99,6 @@ private:
     GrBuffer* onCreateBuffer(size_t sizeInBytes, GrBufferType, GrAccessPattern,
                              const void*) override;
 
-    gr_instanced::InstancedRendering* onCreateInstancedRendering() override { return nullptr; }
-
     bool onReadPixels(GrSurface* surface, GrSurfaceOrigin,
                       int left, int top, int width, int height,
                       GrPixelConfig,
@@ -122,7 +121,7 @@ private:
         return true;
     }
 
-    void onResolveRenderTarget(GrRenderTarget* target, GrSurfaceOrigin) override { return; }
+    void onResolveRenderTarget(GrRenderTarget* target) override { return; }
 
     void onFinishFlush(bool insertedSemaphores) override {}
 
@@ -131,12 +130,10 @@ private:
                                                                 int height) override;
     void clearStencil(GrRenderTarget*, int clearValue) override  {}
 
-    GrBackendObject createTestingOnlyBackendTexture(void* pixels, int w, int h, GrPixelConfig,
-                                                    bool isRT) override;
-
-    bool isTestingOnlyBackendTexture(GrBackendObject) const override;
-
-    void deleteTestingOnlyBackendTexture(GrBackendObject, bool abandonTexture) override;
+    GrBackendTexture createTestingOnlyBackendTexture(void* pixels, int w, int h, GrPixelConfig,
+                                                    bool isRT, GrMipMapped) override;
+    bool isTestingOnlyBackendTexture(const GrBackendTexture&) const override;
+    void deleteTestingOnlyBackendTexture(GrBackendTexture*, bool abandonTexture = false) override;
 
     static int NextInternalTextureID();
     static int NextExternalTextureID();

@@ -8,6 +8,7 @@
 #include "SkSLString.h"
 
 #include "SkSLUtil.h"
+#include <algorithm>
 #include <errno.h>
 #include <limits.h>
 #include <locale>
@@ -148,11 +149,37 @@ bool StringFragment::operator!=(StringFragment s) const {
 }
 
 bool StringFragment::operator==(const char* s) const {
-    return !strncmp(fChars, s, fLength);
+    for (size_t i = 0; i < fLength; ++i) {
+        if (fChars[i] != s[i]) {
+            return false;
+        }
+    }
+    return 0 == s[fLength];
 }
 
 bool StringFragment::operator!=(const char* s) const {
-    return strncmp(fChars, s, fLength);
+    for (size_t i = 0; i < fLength; ++i) {
+        if (fChars[i] != s[i]) {
+            return true;
+        }
+    }
+    return 0 != s[fLength];
+}
+
+bool StringFragment::operator<(StringFragment other) const {
+    int comparison = strncmp(fChars, other.fChars, std::min(fLength, other.fLength));
+    if (comparison) {
+        return comparison < 0;
+    }
+    return fLength < other.fLength;
+}
+
+bool operator==(const char* s1, StringFragment s2) {
+    return s2 == s1;
+}
+
+bool operator!=(const char* s1, StringFragment s2) {
+    return s2 != s1;
 }
 
 String to_string(int32_t value) {

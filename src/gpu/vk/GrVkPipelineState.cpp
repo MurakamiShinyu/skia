@@ -8,6 +8,7 @@
 #include "GrVkPipelineState.h"
 
 #include "GrContext.h"
+#include "GrContextPriv.h"
 #include "GrPipeline.h"
 #include "GrTexturePriv.h"
 #include "GrVkBufferView.h"
@@ -209,8 +210,6 @@ static void append_texture_bindings(
         const GrResourceIOProcessor& processor,
         SkTArray<const GrResourceIOProcessor::TextureSampler*>* textureBindings,
         SkTArray<const GrResourceIOProcessor::BufferAccess*>* bufferAccesses) {
-    // We don't support image storages in VK.
-    SkASSERT(!processor.numImageStorages());
     if (int numTextureSamplers = processor.numTextureSamplers()) {
         const GrResourceIOProcessor::TextureSampler** bindings =
                 textureBindings->push_back_n(numTextureSamplers);
@@ -265,10 +264,12 @@ void GrVkPipelineState::setData(GrVkGpu* gpu,
         fXferProcessor->setData(fDataManager, pipeline.getXferProcessor(), dstTexture, offset);
     }
 
+    GrResourceProvider* resourceProvider = gpu->getContext()->contextPriv().resourceProvider();
+
     GrResourceIOProcessor::TextureSampler dstTextureSampler;
     if (GrTextureProxy* dstTextureProxy = pipeline.dstTextureProxy()) {
         dstTextureSampler.reset(sk_ref_sp(dstTextureProxy));
-        SkAssertResult(dstTextureSampler.instantiate(gpu->getContext()->resourceProvider()));
+        SkAssertResult(dstTextureSampler.instantiate(resourceProvider));
         textureBindings.push_back(&dstTextureSampler);
     }
 

@@ -20,12 +20,12 @@ DECLARE_string(colorImages);
 DECLARE_bool(simpleCodec);
 DECLARE_string(match);
 DECLARE_bool(quiet);
-DECLARE_bool(resetGpuContext);
 DECLARE_bool(preAbandonGpuContext);
 DECLARE_bool(abandonGpuContext);
 DECLARE_bool(releaseAndAbandonGpuContext);
 DECLARE_string(skps);
 DECLARE_bool(ddl);
+DECLARE_string(jsons);
 DECLARE_string(svgs);
 DECLARE_int32(threads);
 DECLARE_string(resourcePath);
@@ -37,7 +37,6 @@ DECLARE_bool(analyticAA);
 DECLARE_bool(forceAnalyticAA);
 DECLARE_bool(deltaAA);
 DECLARE_bool(forceDeltaAA);
-
 DECLARE_string(key);
 DECLARE_string(properties);
 

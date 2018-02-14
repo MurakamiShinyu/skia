@@ -10,6 +10,8 @@
 
 #include "GrRenderTarget.h"
 
+#include "GrBackendSurface.h"
+
 #import <Metal/Metal.h>
 
 class GrMtlGpu;
@@ -40,6 +42,10 @@ public:
 
     GrBackendObject getRenderTargetHandle() const override;
 
+    GrBackendRenderTarget getBackendRenderTarget() const override {
+        return GrBackendRenderTarget(); // invalid
+    }
+
 protected:
     GrMtlRenderTarget(GrMtlGpu* gpu,
                       const GrSurfaceDesc& desc,
@@ -57,10 +63,13 @@ protected:
 
     // This accounts for the texture's memory and any MSAA renderbuffer's memory.
     size_t onGpuMemorySize() const override {
+        int numColorSamples = this->numColorSamples();
         // The plus 1 is to account for the resolve texture or if not using msaa the RT itself
-        int numColorSamples = this->numColorSamples() + 1;
+        if (numColorSamples > 1) {
+            ++numColorSamples;
+        }
         return GrSurface::ComputeSize(this->config(), this->width(), this->height(),
-                                      numColorSamples, false);
+                                      numColorSamples, GrMipMapped::kNo);
     }
 
     id<MTLTexture> fRenderTexture;

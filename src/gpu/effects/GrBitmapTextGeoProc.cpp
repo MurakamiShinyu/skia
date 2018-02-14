@@ -14,7 +14,7 @@
 #include "glsl/GrGLSLProgramDataManager.h"
 #include "glsl/GrGLSLUniformHandler.h"
 #include "glsl/GrGLSLVarying.h"
-#include "glsl/GrGLSLVertexShaderBuilder.h"
+#include "glsl/GrGLSLVertexGeoBuilder.h"
 
 class GrGLBitmapTextGeoProc : public GrGLSLGeometryProcessor {
 public:
@@ -37,8 +37,9 @@ public:
                                                           "AtlasSizeInv",
                                                           &atlasSizeInvName);
 
-        GrGLSLVertToFrag uv(kFloat2_GrSLType);
-        GrGLSLVertToFrag texIdx(kHalf_GrSLType);
+        GrGLSLVarying uv(kFloat2_GrSLType);
+        GrSLType texIdxType = args.fShaderCaps->integerSupport() ? kInt_GrSLType : kFloat_GrSLType;
+        GrGLSLVarying texIdx(texIdxType);
         append_index_uv_varyings(args, btgp.inTextureCoords()->fName, atlasSizeInvName,
                                  &uv, &texIdx, nullptr);
 
@@ -58,8 +59,7 @@ public:
         this->emitTransforms(vertBuilder,
                              varyingHandler,
                              uniformHandler,
-                             gpArgs->fPositionVar,
-                             btgp.inPosition()->fName,
+                             btgp.inPosition()->asShaderVar(),
                              btgp.localMatrix(),
                              args.fFPCoordTransformHandler);
 
@@ -124,12 +124,12 @@ GrBitmapTextGeoProc::GrBitmapTextGeoProc(GrColor color,
                                          const sk_sp<GrTextureProxy> proxies[kMaxTextures],
                                          const GrSamplerState& params, GrMaskFormat format,
                                          const SkMatrix& localMatrix, bool usesLocalCoords)
-        : fColor(color)
+        : INHERITED(kGrBitmapTextGeoProc_ClassID)
+        , fColor(color)
         , fLocalMatrix(localMatrix)
         , fUsesLocalCoords(usesLocalCoords)
         , fInColor(nullptr)
         , fMaskFormat(format) {
-    this->initClassID<GrBitmapTextGeoProc>();
     fInPosition = &this->addVertexAttrib("inPosition", kFloat2_GrVertexAttribType);
 
     bool hasVertexColor = kA8_GrMaskFormat == fMaskFormat ||

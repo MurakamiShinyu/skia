@@ -10,7 +10,7 @@
 #include "SkOSFile.h"
 #include "SkOSPath.h"
 
-/* 
+/*
 things to do
 if cap word is beginning of sentence, add it to table as lower-case
    word must have only a single initial capital
@@ -53,7 +53,6 @@ private:
         INHERITED::resetCommon();
         fMethod = nullptr;
         fRoot = nullptr;
-        fTableState = TableState::kNone;
         fInCode = false;
         fInConst = false;
         fInFormula = false;
@@ -74,7 +73,7 @@ private:
     const BmhParser& fBmhParser;
     Definition* fMethod;
     RootDefinition* fRoot;
-    TableState fTableState;
+    int fLocalLine;
     bool fInCode;
     bool fInConst;
     bool fInDescription;
@@ -93,6 +92,14 @@ private:
 void BmhParser::spellCheck(const char* match, SkCommandLineFlags::StringArray report) const {
     SpellCheck checker(*this);
     checker.check(match);
+    checker.report(report);
+}
+
+void BmhParser::spellStatus(const char* statusFile, SkCommandLineFlags::StringArray report) const {
+    SpellCheck checker(*this);
+    StatusIter iter(statusFile, ".bmh", StatusFilter::kInProgress);
+    string match = iter.baseDir();
+    checker.check(match.c_str());
     checker.report(report);
 }
 
@@ -128,10 +135,6 @@ bool SpellCheck::check(Definition* def) {
     fLineCount = def->fLineCount;
     string printable = def->printableName();
     const char* textStart = def->fContentStart;
-    if (MarkType::kParam != def->fMarkType && MarkType::kConst != def->fMarkType &&
-            MarkType::kPrivate != def->fMarkType && TableState::kNone != fTableState) {
-        fTableState = TableState::kNone;
-    }
     switch (def->fMarkType) {
         case MarkType::kAlias:
             break;
@@ -151,12 +154,6 @@ bool SpellCheck::check(Definition* def) {
             break;
         case MarkType::kConst: {
             fInConst = true;
-            if (TableState::kNone == fTableState) {
-                fTableState = TableState::kRow;
-            }
-            if (TableState::kRow == fTableState) {
-                fTableState = TableState::kColumn;
-            }
             this->wordCheck(def->fName);
             const char* lineEnd = strchr(textStart, '\n');
             this->wordCheck(lineEnd - textStart, textStart);
@@ -173,11 +170,11 @@ bool SpellCheck::check(Definition* def) {
             break;
         case MarkType::kDoxygen:
             break;
+        case MarkType::kDuration:
+            break;
         case MarkType::kEnum:
         case MarkType::kEnumClass:
             this->wordCheck(def->fName);
-            break;
-        case MarkType::kError:
             break;
         case MarkType::kExample:
             break;
@@ -196,11 +193,17 @@ bool SpellCheck::check(Definition* def) {
             break;
         case MarkType::kImage:
             break;
+        case MarkType::kIn:
+            break;
         case MarkType::kLegend:
+            break;
+        case MarkType::kLine:
             break;
         case MarkType::kLink:
             break;
         case MarkType::kList:
+            break;
+        case MarkType::kLiteral:
             break;
         case MarkType::kMarkChar:
             break;
@@ -211,22 +214,16 @@ bool SpellCheck::check(Definition* def) {
             if (all_lower(method_name)) {
                 method_name += "()";
             }
-            string formattedStr = def->formatFunction();
-            if (!def->isClone()) {
+            if (!def->isClone() && Definition::MethodType::kOperator != def->fMethodType) {
                 this->wordCheck(method_name);
             }
-            fTableState = TableState::kNone;
             fMethod = def;
             } break;
         case MarkType::kNoExample:
             break;
+        case MarkType::kOutdent:
+            break;
         case MarkType::kParam: {
-            if (TableState::kNone == fTableState) {
-                fTableState = TableState::kRow;
-            }
-            if (TableState::kRow == fTableState) {
-                fTableState = TableState::kColumn;
-            }
             TextParser paramParser(def->fFileName, def->fStart, def->fContentStart,
                     def->fLineCount);
             paramParser.skipWhiteSpace();
@@ -242,6 +239,8 @@ bool SpellCheck::check(Definition* def) {
        } break;
         case MarkType::kPlatform:
             break;
+        case MarkType::kPopulate:
+            break;
         case MarkType::kPrivate:
             break;
         case MarkType::kReturn:
@@ -249,6 +248,8 @@ bool SpellCheck::check(Definition* def) {
         case MarkType::kRow:
             break;
         case MarkType::kSeeAlso:
+            break;
+        case MarkType::kSet:
             break;
         case MarkType::kStdOut: {
             fInStdOut = true;
@@ -324,8 +325,6 @@ bool SpellCheck::check(Definition* def) {
         case MarkType::kConst:
             fInConst = false;
         case MarkType::kParam:
-            SkASSERT(TableState::kColumn == fTableState);
-            fTableState = TableState::kRow;
             break;
         case MarkType::kReturn:
         case MarkType::kSeeAlso:
@@ -378,6 +377,7 @@ void SpellCheck::leafCheck(const char* start, const char* end) {
     const char* wordStart = nullptr;
     const char* wordEnd = nullptr;
     const char* possibleEnd = nullptr;
+    fLocalLine = 0;
     do {
         if (wordStart && wordEnd) {
             if (!allLower || (!inQuotes && '\"' != lastCh && !inParens
@@ -409,7 +409,7 @@ void SpellCheck::leafCheck(const char* start, const char* end) {
                 } else {
                     wordEnd = chPtr;
                 }
-                SkASSERT(inParens >= 0);
+                SkASSERT(inParens >= 0 || fInStdOut);
                 break;
             case '\"':
                 inQuotes = !inQuotes;
@@ -428,7 +428,7 @@ void SpellCheck::leafCheck(const char* start, const char* end) {
             case 'k': case 'l': case 'm': case 'n': case 'o':
             case 'p': case 'q': case 'r': case 's': case 't':
             case 'u': case 'v': case 'w': case 'x': case 'y':
-            case 'z': 
+            case 'z':
                 if (!wordStart) {
                     wordStart = chPtr;
                     wordEnd = nullptr;
@@ -441,10 +441,13 @@ void SpellCheck::leafCheck(const char* start, const char* end) {
                 break;
             case '0': case '1': case '2': case '3': case '4':
             case '5': case '6': case '7': case '8': case '9':
-            case '_': 
+            case '_':
                 allLower = false;
             case '-':  // note that dash doesn't clear allLower
                 break;
+            case '\n':
+                ++fLocalLine;
+                // fall through
             default:
                 wordEnd = chPtr;
                 break;
@@ -480,7 +483,8 @@ void SpellCheck::report(SkCommandLineFlags::StringArray report) {
                 continue;
             }
             if (iter.second.fCount == 1) {
-                SkDebugf("%s(%d): %s\n", iter.second.fFile.c_str(), iter.second.fLine,
+                string fullName = this->ReportFilename(iter.second.fFile);
+                SkDebugf("%s(%d): %s\n", fullName.c_str(), iter.second.fLine,
                         iter.first.c_str());
             }
         }
@@ -490,6 +494,7 @@ void SpellCheck::report(SkCommandLineFlags::StringArray report) {
     if (report.contains("all")) {
         int column = 0;
         char lastInitial = 'a';
+        int count = 0;
         for (auto iter : elems) {
             if (string::npos != iter.second.fFile.find("undocumented.bmh")) {
                 continue;
@@ -521,8 +526,9 @@ void SpellCheck::report(SkCommandLineFlags::StringArray report) {
             }
             SkDebugf("%s ", check.c_str());
             column += check.length();
+            ++count;
         }
-        SkDebugf("\n\n");
+        SkDebugf("\n\ncount = %d\n", count);
         return;
     }
     int index = 0;
@@ -548,7 +554,8 @@ void SpellCheck::report(SkCommandLineFlags::StringArray report) {
             break;
         }
         if (check.compare(mispelled) == 0) {
-            SkDebugf("%s(%d): %s\n", iter.second.fFile.c_str(), iter.second.fLine,
+            string fullName = this->ReportFilename(iter.second.fFile);
+            SkDebugf("%s(%d): %s\n", fullName.c_str(), iter.second.fLine,
                     iter.first.c_str());
             if (report.count() == ++index) {
                 break;
@@ -595,7 +602,6 @@ void SpellCheck::wordCheck(const string& str) {
             sawSpecial = true;
             continue;
         }
-        SkDebugf("");
         SkASSERT(0);
     }
     if (sawSpecial && !hasParen) {
@@ -603,16 +609,18 @@ void SpellCheck::wordCheck(const string& str) {
     }
     bool inCode = fInCode;
     if (hasUnderscore && isupper(str[0]) && ('S' != str[0] || 'K' != str[1])
-            && !hasColon && !hasDot && !hasParen && !fInStdOut && !inCode && !fInConst 
+            && !hasColon && !hasDot && !hasParen && !fInStdOut && !inCode && !fInConst
             && !sawDigit && !sawSpecial && !sawDash) {
         std::istringstream ss(str);
         string token;
         while (std::getline(ss, token, '_')) {
-            this->wordCheck(token);
+            if (token.length()) {
+                this->wordCheck(token);
+            }
         }
         return;
     }
-    if (!hasColon && !hasDot && !hasParen && !hasUnderscore 
+    if (!hasColon && !hasDot && !hasParen && !hasUnderscore
             && !fInStdOut && !inCode && !fInConst && !sawDigit
             && islower(str[0]) && isupper(str[1])) {
         inCode = true;
@@ -626,7 +634,7 @@ void SpellCheck::wordCheck(const string& str) {
             }
         }
     }
-    auto& mappy = hasColon ? fColons : 
+    auto& mappy = hasColon ? fColons :
                   hasDot ? fDots :
                   hasParen ? fParens :
                   hasUnderscore ? fUnderscores :
@@ -638,7 +646,7 @@ void SpellCheck::wordCheck(const string& str) {
     } else {
         CheckEntry* entry = &mappy[str];
         entry->fFile = fFileName;
-        entry->fLine = fLineCount;
+        entry->fLine = fLineCount + fLocalLine;
         entry->fCount = 1;
     }
 }

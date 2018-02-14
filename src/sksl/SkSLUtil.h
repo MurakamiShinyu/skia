@@ -83,10 +83,6 @@ public:
         return false;
     }
 
-    bool bindlessTextureSupport() const {
-        return false;
-    }
-
     bool dropsTileOnZeroDivide() const {
         return false;
     }
@@ -135,8 +131,8 @@ public:
         return false;
     }
 
-    bool floatPrecisionVaries() const {
-        return false;
+    bool floatIs32Bits() const {
+        return true;
     }
 
     bool integerSupport() const {
@@ -155,15 +151,27 @@ public:
         return nullptr;
     }
 
+    const char* geometryShaderExtensionString() const {
+        return nullptr;
+    }
+
+    const char* gsInvocationsExtensionString() const {
+        return nullptr;
+    }
+
     const char* versionDeclString() const {
         return "";
     }
 
-    bool mustImplementGSInvocationsWithLoop() const {
-        return false;
+    bool gsInvocationsSupport() const {
+        return true;
     }
 
     bool canUseFractForNegativeValues() const {
+        return true;
+    }
+
+    bool canUseFragCoord() const {
         return true;
     }
 };
@@ -248,10 +256,37 @@ public:
         return result;
     }
 
-    static sk_sp<GrShaderCaps> MustImplementGSInvocationsWithLoop() {
+    static sk_sp<GrShaderCaps> GeometryShaderSupport() {
         sk_sp<GrShaderCaps> result = sk_make_sp<GrShaderCaps>(GrContextOptions());
         result->fVersionDeclString = "#version 400";
-        result->fMustImplementGSInvocationsWithLoop = true;
+        result->fGeometryShaderSupport = true;
+        result->fGSInvocationsSupport = true;
+        return result;
+    }
+
+    static sk_sp<GrShaderCaps> NoGSInvocationsSupport() {
+        sk_sp<GrShaderCaps> result = sk_make_sp<GrShaderCaps>(GrContextOptions());
+        result->fVersionDeclString = "#version 400";
+        result->fGeometryShaderSupport = true;
+        result->fGSInvocationsSupport = false;
+        return result;
+    }
+
+    static sk_sp<GrShaderCaps> GeometryShaderExtensionString() {
+        sk_sp<GrShaderCaps> result = sk_make_sp<GrShaderCaps>(GrContextOptions());
+        result->fVersionDeclString = "#version 310es";
+        result->fGeometryShaderSupport = true;
+        result->fGeometryShaderExtensionString = "GL_EXT_geometry_shader";
+        result->fGSInvocationsSupport = true;
+        return result;
+    }
+
+    static sk_sp<GrShaderCaps> GSInvocationsExtensionString() {
+        sk_sp<GrShaderCaps> result = sk_make_sp<GrShaderCaps>(GrContextOptions());
+        result->fVersionDeclString = "#version 400";
+        result->fGeometryShaderSupport = true;
+        result->fGSInvocationsSupport = true;
+        result->fGSInvocationsExtensionString = "GL_ARB_gpu_shader5";
         return result;
     }
 
@@ -263,6 +298,13 @@ public:
         result->fDropsTileOnZeroDivide = true;
         result->fTexelFetchSupport = true;
         result->fCanUseAnyFunctionInShader = false;
+        return result;
+    }
+
+    static sk_sp<GrShaderCaps> CannotUseFragCoord() {
+        sk_sp<GrShaderCaps> result = sk_make_sp<GrShaderCaps>(GrContextOptions());
+        result->fVersionDeclString = "#version 400";
+        result->fCanUseFragCoord = false;
         return result;
     }
 };

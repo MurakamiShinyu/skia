@@ -165,7 +165,8 @@ public:
 protected:
     sk_sp<GrTextureProxy> onGenerateTexture(GrContext* ctx, const SkImageInfo& info,
                                             const SkIPoint& origin,
-                                            SkTransferFunctionBehavior) override {
+                                            SkTransferFunctionBehavior,
+                                            bool willBeMipped) override {
         SkASSERT(ctx);
         SkASSERT(ctx == fCtx.get());
 
@@ -185,8 +186,11 @@ protected:
         desc.fHeight = info.height();
         desc.fConfig = fProxy->config();
 
+        GrMipMapped mipMapped = willBeMipped ? GrMipMapped::kYes : GrMipMapped::kNo;
+
         sk_sp<GrSurfaceContext> dstContext(fCtx->contextPriv().makeDeferredSurfaceContext(
                                                                             desc,
+                                                                            mipMapped,
                                                                             SkBackingFit::kExact,
                                                                             SkBudgeted::kYes));
         if (!dstContext) {

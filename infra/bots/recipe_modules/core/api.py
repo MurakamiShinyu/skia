@@ -35,7 +35,9 @@ class SkiaApi(recipe_api.RecipeApi):
   def checkout_steps(self):
     """Run the steps to obtain a checkout of Skia."""
     cfg_kwargs = {}
+    is_parent_revision = 'ParentRevision' in self.m.vars.extra_tokens
     if not self.m.vars.persistent_checkout:
+      assert not is_parent_revision
       # We should've obtained the Skia checkout through isolates, so we don't
       # need to perform the checkout ourselves.
       return
@@ -97,7 +99,7 @@ class SkiaApi(recipe_api.RecipeApi):
       main.revision = 'origin/master'
       main.managed = True
       m[main_name] = 'got_flutter_revision'
-      if 'Android' in self.m.vars.builder_cfg.get('extra_config', ''):
+      if 'Android' in self.m.vars.extra_tokens:
         gclient_cfg.target_os.add('android')
 
       skia_dep_path = 'src/third_party/skia'
@@ -132,9 +134,19 @@ class SkiaApi(recipe_api.RecipeApi):
       )
       self.m.bot_update._repository = patch_repo
 
+    if not self.m.vars.is_trybot and is_parent_revision:
+      main.revision = main.revision + '^'
+
     self.m.gclient.c = gclient_cfg
     with self.m.context(cwd=self.m.vars.checkout_root):
-      update_step = self.m.bot_update.ensure_checkout(patch_root=patch_root)
+      update_step = self.m.bot_update.ensure_checkout(
+          patch_root=patch_root,
+          # The logic in ensure_checkout for this arg is fairly naive, so if
+          # patch=False, we'll see "... (without patch)" in the step names, even
+          # for non-trybot runs, which is misleading and confusing. Therefore,
+          # always specify patch=True for non-trybot runs.
+          patch=not (self.m.vars.is_trybot and is_parent_revision)
+      )
 
     self.m.vars.got_revision = (
         update_step.presentation.properties['got_revision'])
@@ -142,4 +154,12 @@ class SkiaApi(recipe_api.RecipeApi):
     if self.m.vars.need_chromium_checkout:
       with self.m.context(cwd=self.m.vars.checkout_root,
                           env=self.m.vars.gclient_env):
-        self.m.gclient.runhooks()
+        # TODO(borenet): Remove this hack and replace with
+        # 'self.m.gclient.runhooks()' after the transition to Kitchen:
+        # https://bugs.chromium.org/p/skia/issues/detail?id=7050
+        depot_tools = self.m.vars.checkout_root.join('depot_tools')
+        self.m.git.checkout(
+            'https://chromium.googlesource.com/chromium/tools/depot_tools.git',
+            dir_path=depot_tools, ref='master')
+        self.m.run(self.m.step, 'gclient runhooks',
+                   cmd=[depot_tools.join('gclient'), 'runhooks'])
